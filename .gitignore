@@ -1,0 +1,9 @@
+# Persoonlijke data en testbuilds nooit publiek
+dist/
+data/
+kring-prive/
+*.zip
+*seed*.json
+node_modules/
+.env
+supabase/.temp/
