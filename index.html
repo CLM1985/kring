@@ -99,6 +99,10 @@ body.breed .menu-grid{grid-template-columns:minmax(0,1fr) 340px}
 .slot.leeg{border-style:dashed;background:transparent;color:var(--muted)}
 .slot.vrij .titel{font-style:italic;font-weight:400}
 .slot:hover{border-color:var(--primary)}
+.slotwrap{position:relative;min-width:0}
+.slotwrap .slot{padding-right:40px}
+.slot-x{position:absolute;top:6px;right:6px;width:30px;height:30px;border-radius:50%;border:0;background:transparent;color:var(--muted);font-size:1rem;line-height:1;cursor:pointer}
+.slot-x:hover,.slot-x:focus-visible{background:var(--line);color:var(--fg)}
 .slot.over{background:var(--drop);border-color:var(--primary);border-style:solid}
 .slot[draggable="true"]{cursor:grab}
 
@@ -4435,8 +4439,9 @@ function zijlijst(){
 function slotHtml(ds, mo, lbl){
   const m = slot(ds, mo), g = m && gerecht(m.gerecht_id), l = lbl ? `<span class="moment">${lbl}</span>` : "";
   const attr = `data-slot="${ds}|${mo}"`;
-  if (g) return `<button class="slot vol" ${attr} draggable="true">${l}<span class="titel">${esc(g.naam)}</span><span class="meta">${m.porties || g.porties} pers.${zonderIngr(g) ? " · geen ingrediënten" : ""}</span></button>`;
-  if (m && m.vrije_tekst) return `<button class="slot vrij" ${attr} draggable="true">${l}<span class="titel">${esc(m.vrije_tekst)}</span><span class="meta">geen boodschappen</span></button>`;
+  const weg = naam => `<button class="slot-x" data-slotweg="${ds}|${mo}" aria-label="${esc(naam)} verwijderen" title="Verwijderen">✕</button>`;
+  if (g) return `<div class="slotwrap"><button class="slot vol" ${attr} draggable="true" title="Recept bekijken">${l}<span class="titel">${esc(g.naam)}</span><span class="meta">${m.porties || g.porties} pers.${zonderIngr(g) ? " · geen ingrediënten" : ""}</span></button>${weg(g.naam)}</div>`;
+  if (m && m.vrije_tekst) return `<div class="slotwrap"><button class="slot vrij" ${attr} draggable="true">${l}<span class="titel">${esc(m.vrije_tekst)}</span><span class="meta">geen boodschappen</span></button>${weg(m.vrije_tekst)}</div>`;
   return `<button class="slot leeg" ${attr}>${l}<span>+ Gerecht kiezen</span></button>`;
 }
 
@@ -4571,7 +4576,7 @@ function openKiezer(ds, mo){
 }
 
 /* Recept bekijken */
-function openRecept(id){
+function openRecept(id, vanSlot){
   const g = gerecht(id); if (!g) return;
   const dagen = [0,1,2,3,4,5,6].map(i => plus(S.pweek, i));
   openPaneel(`
@@ -4583,9 +4588,10 @@ function openRecept(id){
     ${g.bereiding ? `<h3 style="font-size:1rem;margin:14px 0 4px">Bereiding</h3><p class="omschr" style="color:var(--fg)">${esc(g.bereiding)}</p>` : ""}
     <h3 style="font-size:1rem;margin:16px 0 6px">Inplannen ${pwLabel()} (avond, ${S.porties} p.)</h3>
     <div class="daglijst">${dagen.map(d => { const ds = iso(d), b = slot(ds, "avond"); return `<button class="keuze" data-plan="${ds}"><span>${DAGEN[(d.getDay() + 6) % 7].slice(0, 2)} ${d.getDate()}/${d.getMonth() + 1}</span><span>${b ? "bezet" : ""}</span></button>`; }).join("")}</div>
-    <div class="voet"><button class="knop sec" data-sluit>Sluiten</button><button class="knop" data-bewerk="${g.id}">Bewerken</button></div>`);
+    <div class="voet">${vanSlot ? `<button class="knop sec links" data-wissel>Ander gerecht</button>` : ""}<button class="knop sec" data-sluit>Sluiten</button><button class="knop" data-bewerk="${g.id}">Bewerken</button></div>`);
   $("#paneel").onclick = e => {
     const t = e.target.closest("button"); if (!t) return;
+    if ("wissel" in t.dataset) return openKiezer(vanSlot.ds, vanSlot.mo);
     if (t.dataset.plan) run(async () => { await db.setSlot(t.dataset.plan, "avond", {gerecht_id: g.id, porties: S.porties}); await herlaadWeek(); sluitPaneel(); render(); toast("Ingepland"); });
     else if (t.dataset.bewerk) openEditor(t.dataset.bewerk);
   };
@@ -4798,7 +4804,8 @@ document.addEventListener("click", e => {
   const t = e.target.closest("button"); if (!t || t.closest("#paneel")) { if (t && "sluit" in t.dataset) sluitPaneel(); return; }
   if (t.dataset.tab){ S.tab = t.dataset.tab; if (S.tab === "lijsten") S.lijstOpen = null; if (location.hash !== "#" + S.tab) history.replaceState(null, "", "#" + S.tab); render(); window.scrollTo(0, 0); }
   else if (t.dataset.goto){ S.tab = t.dataset.goto; history.replaceState(null, "", "#" + S.tab); render(); window.scrollTo(0, 0); }
-  else if (t.dataset.slot){ const [d, m] = t.dataset.slot.split("|"); openKiezer(d, m); }
+  else if (t.dataset.slotweg){ const [d, m] = t.dataset.slotweg.split("|"); run(async () => { await db.clearSlot(d, m); await herlaadWeek(); render(); toast("Verwijderd uit het weekmenu"); }); }
+  else if (t.dataset.slot){ const [d, m] = t.dataset.slot.split("|"), x = slot(d, m); if (x && x.gerecht_id && gerecht(x.gerecht_id)) openRecept(x.gerecht_id, { ds: d, mo: m }); else openKiezer(d, m); }
   else if (t.dataset.open) openRecept(t.dataset.open);
   else if ("nieuw" in t.dataset) openEditor(null);
   else if ("onvolledig" in t.dataset){ S.onvolledig = !S.onvolledig; S.cat = ""; viewGerechten(); }
