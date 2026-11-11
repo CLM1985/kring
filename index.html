@@ -3154,7 +3154,9 @@ window.VS_LOCAL = {
 window.VS_SUPA = {
   async loadVoorstelInst(){ const { data } = await this.g.from("instellingen").select("weekvoorstel").eq("huishouden_id", this.h).maybeSingle(); return { ...VS.STANDAARD, ...((data && data.weekvoorstel) || {}) }; },
   async bewaarVoorstelInst(w){ this.ok(await this.g.rpc("bewaar_weekvoorstel_instellingen", { p_huishouden: this.h, p: w })); },
-  async loadVoorstel(start){ const { data } = await this.g.from("weekvoorstellen").select("*").eq("huishouden_id", this.h).eq("start", start).maybeSingle(); return data || null; },
+  async loadVoorstel(start){ const { data } = await this.g.from("weekvoorstellen").select("*").eq("huishouden_id", this.h).eq("start", start).maybeSingle();
+    if (data && !data.einde) data.einde = (data.dagen || []).length ? data.dagen[data.dagen.length - 1].datum : plus(data.start, 6);   // einde staat niet in de tabel
+    return data || null; },
   async bewaarVoorstel(v){ this.ok(await this.g.from("weekvoorstellen").upsert({ huishouden_id: this.h, start: v.start, dagen: v.dagen, uitsluiten: v.uitsluiten || {}, status: v.status, gemaakt: v.gemaakt }, { onConflict: "huishouden_id,start" })); },
   async loadMenuBereik(van, tot){ return this.ok(await this.g.from("weekmenu").select("*").eq("huishouden_id", this.h).gte("datum", van).lte("datum", tot)); }
 };
@@ -3198,7 +3200,7 @@ async function vsAuto(){
 }
 
 /* ---------- Vandaag-kaart ---------- */
-const vsDagLabel = ds => { const d = new Date(ds + "T12:00:00"); return `${VS_KORT[VS.weekdag(ds)]} ${d.getDate()} ${MND[d.getMonth()]}`; };
+const vsDagLabel = ds => { if (!ds) return "?"; const d = new Date(ds + "T12:00:00"); return `${VS_KORT[VS.weekdag(ds)]} ${d.getDate()} ${MND[d.getMonth()]}`; };
 function vsVandaagKaart(kaart){
   if (!S.vs || S.vs.status !== "voorstel") return "";
   const d = S.vs.dagen;
