@@ -1277,7 +1277,7 @@ function budgetBerekening() { if (!BR || BR.data !== S.budget) BR = { data: S.bu
 const regelsCache = () => (BR && BR.regels) || (BR.regels = KB.regels(S.budget.transacties));
 
 function viewBudget() {
-  if (!S.budget) { $("#view").innerHTML = `<div class="leegstaat">Budget laden…</div>`; return; }
+  if (!S.budget) { $("#view").innerHTML = `<div class="leegstaat">${S.budgetGeladen ? "Nog geen budget gekoppeld aan dit gezin, of het kon niet geladen worden. Probeer later opnieuw." : "Budget laden…"}</div>`; return; }
   const seg = `<div class="ag-kop"><div class="seg" role="group" aria-label="Budget">${[["plan", "Plan"], ["rekeningen", "Rekeningen"], ["rapporten", "Rapporten"]].map(([k, l]) => `<button data-bview="${k}" aria-pressed="${S.budgetView === k}">${l}</button>`).join("")}</div></div>`;
   const banner = beBanner();
   $("#view").innerHTML = banner + seg + `<div id="bview"></div>`;
@@ -4348,7 +4348,7 @@ async function herlaadWeek(){
 async function herlaadProducten(){ const p = await db.loadProducten(); S.producten = p.producten; S.koppeling = p.koppeling; S.prodIdx = new Map(S.producten.map(x => [String(x.id), x])); }
 async function herlaadAgenda(){ const a = await db.loadAgenda(); Object.assign(S, a); if (db.mijnLid) S.ik = db.mijnLid; else if (!S.leden.some(l => l.id === S.ik)) S.ik = (S.leden[0] || {}).id || null; }
 async function herlaadGezin(){ const g = await db.loadGezin(); S.lijsten = g.lijsten; S.activiteit = g.activiteit; }
-async function herlaadBudget(){ try { BE.status = "test"; S.budget = await db.loadBudget(); if (S.budget && !S.bmaand) S.bmaand = S.budget.huidig; } catch(e){ console.error(e); S.budget = null; } }
+async function herlaadBudget(){ try { BE.status = "test"; S.budget = await db.loadBudget(); if (S.budget && !S.bmaand) S.bmaand = S.budget.huidig; } catch(e){ console.error(e); S.budget = null; } S.budgetGeladen = true; }
 async function herlaadAlles(){ S.gerechten = await db.loadGerechten(); await herlaadVoorstel(); await Promise.all([herlaadWeek(), herlaadProducten(), herlaadAgenda(), herlaadGezin(), herlaadBudget(), herlaadDiepvries(), herlaadVoorraad()]); await herlaadR5(); }
 const gerecht = id => S.gerechten.find(g => g.id === id);
 const slot = (d, m) => S.menu.find(x => x.datum === d && x.moment === m);
