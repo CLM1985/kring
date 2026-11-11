@@ -2652,6 +2652,18 @@ async function vrLeesBestand(f){
   if (r.dubbel) return vrDubbel(t, r.dubbel);
   await herlaadVoorraad(); render(); openBinnengekomen(r.ticket.id);
 }
+/* Kasticket gedeeld vanuit een andere app (Android, via de service worker) */
+async function vrGedeeldTicket(){
+  if (new URLSearchParams(location.search).get("gedeeld") !== "ticket") return;
+  history.replaceState(null, "", location.pathname + "#diepvries");
+  S.tab = "diepvries"; render();
+  let res = null;
+  try { const c = await caches.open("kring-gedeeld"); res = await c.match("gedeeld-ticket"); if (res) await c.delete("gedeeld-ticket"); } catch(e){ console.error(e); }
+  if (!res) return toast("Geen PDF ontvangen. Deel het kasticket als PDF-bestand.");
+  const naam = decodeURIComponent(res.headers.get("X-Bestandsnaam") || "ticket.pdf");
+  const f = new File([await res.blob()], naam, { type: res.headers.get("Content-Type") || "application/pdf" });
+  await vrLeesBestand(f);
+}
 function vrDubbel(t, oud){
   openPaneel(`<div class="paneel-kop"><h2>Ticket al ingelezen</h2><button class="ib" data-sluit aria-label="Sluiten">✕</button></div>
     <p>Het ticket van <b>${esc(t.winkel.naam)}</b> van ${dvDatum(t.datum)} ${esc(t.tijd || "")} (${eur(t.totaal / 100)}) werd al ingelezen${oud.status === "verwerkt" ? " en verwerkt" : ""}. Nog eens inlezen zet alles dubbel op voorraad.</p>
@@ -4912,6 +4924,7 @@ function laadScript(src){ return new Promise((ok, nok) => { const s = document.c
     beAuto();
     vsAuto();
     await r5Init();
+    run(vrGedeeldTicket);
   } catch(e){ console.error(e); $("#view").innerHTML = `<div class="leegstaat">De app kon niet starten: ${esc(e.message)}</div>`; }
 })();
 </script>

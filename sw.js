@@ -1,19 +1,36 @@
 // Kring – service worker. Altijd eerst het netwerk (nieuwste versie), cache enkel als reserve zonder verbinding.
 // Supabase en andere domeinen worden nooit aangeraakt of gecachet.
-const CACHE = "kring-v1"; // verhogen bij grote wijzigingen om oude caches op te ruimen
+const CACHE = "kring-v2";
+const GEDEELD = "kring-gedeeld"; // tijdelijke plek voor een gedeeld kasticket // verhogen bij grote wijzigingen om oude caches op te ruimen
 
 self.addEventListener("install", () => self.skipWaiting());
 
 self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches.keys()
-      .then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((ks) => Promise.all(ks.filter((k) => k !== CACHE && k !== GEDEELD).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
 
 self.addEventListener("fetch", (e) => {
   const r = e.request;
+  // Delen vanuit een andere app (bv. Xtra): Android stuurt de PDF als POST naar ./?deel=ticket
+  if (r.method === "POST" && new URL(r.url).searchParams.get("deel") === "ticket") {
+    e.respondWith((async () => {
+      try {
+        const f = (await r.formData()).get("ticket");
+        if (f && f.size) {
+          const c = await caches.open(GEDEELD);
+          await c.put("gedeeld-ticket", new Response(f, { headers: {
+            "Content-Type": f.type || "application/pdf",
+            "X-Bestandsnaam": encodeURIComponent(f.name || "ticket.pdf") } }));
+        }
+      } catch (_) { /* app toont zelf een melding als er niets is */ }
+      return Response.redirect(new URL("./?gedeeld=ticket#diepvries", self.registration.scope).href, 303);
+    })());
+    return;
+  }
   if (r.method !== "GET" || new URL(r.url).origin !== self.location.origin) return;
   e.respondWith(
     fetch(r, { cache: "no-cache" })
