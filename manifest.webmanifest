@@ -1,14 +1,18 @@
 {
-  "name": "Kring",
+  "name": "Kring – gezinsplatform",
   "short_name": "Kring",
-  "description": "Gezinsplatform: agenda, eten, lijsten, voorraad en budget",
-  "lang": "nl",
+  "description": "Agenda, eten, lijsten, voorraad en budget van het gezin.",
+  "lang": "nl-BE",
+  "id": "./",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#f3f5f2",
   "theme_color": "#24493f",
   "icons": [
-    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    { "src": "app/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "app/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "app/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }
