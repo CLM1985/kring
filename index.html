@@ -1,9 +1,15 @@
 <!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="icon.svg">
 <meta name="theme-color" content="#24493f">
+<link rel="icon" href="app/favicon.png">
+<link rel="apple-touch-icon" href="app/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Kring">
+<script>if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js"));</script>
 </head><body>
 
-<title>Kring Weekmenu</title>
+<title>Kring</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -4740,14 +4746,26 @@ function verbergApp(){ $("#weeknav").hidden = true; $("#meer").hidden = true; $(
 function toonLogin(st){
   verbergApp();
   $("#view").innerHTML = `<div class="login"><h1>Aanmelden</h1>
-    <p class="muted">Je krijgt een link per mail. Geen wachtwoord nodig.</p>
-    <form class="stack" id="login-form"><div class="veld"><label for="l-mail">E-mailadres</label><input class="in" id="l-mail" type="email" autocomplete="email" required></div>
-    <button class="knop">Stuur aanmeldlink</button><p id="l-msg" class="muted"></p></form></div>`;
+    <p class="muted">Je krijgt een code per mail. Geen wachtwoord nodig.</p>
+    <form class="stack" id="login-form"><div class="veld"><label for="l-mail">E-mailadres</label><input class="in" id="l-mail" type="email" autocomplete="email" inputmode="email" required></div>
+    <button class="knop" id="l-stuur">Stuur code</button></form>
+    <form class="stack" id="code-form" hidden><div class="veld"><label for="l-code">Code uit de mail</label><input class="in" id="l-code" inputmode="numeric" autocomplete="one-time-code" maxlength="12" required style="font-size:1.4rem;letter-spacing:.3em;text-align:center"></div>
+    <button class="knop">Aanmelden</button><button type="button" class="knop sec" id="l-terug">Ander e-mailadres of nieuwe code</button></form>
+    <p id="l-msg" class="muted"></p></div>`;
+  let mail = "";
   $("#login-form").onsubmit = e => { e.preventDefault(); run(async () => {
-    const {error} = await st.sb.auth.signInWithOtp({email: $("#l-mail").value.trim(), options: {emailRedirectTo: location.origin + location.pathname}});
-    if (error) throw new Error(error.message);
-    $("#l-msg").textContent = "Check je mailbox en open de link op dit toestel.";
+    mail = $("#l-mail").value.trim();
+    const {error} = await st.sb.auth.signInWithOtp({email: mail, options: {shouldCreateUser: false, emailRedirectTo: location.origin + location.pathname}});
+    if (error) throw new Error(/signups? not allowed|not found|otp_disabled/i.test(error.message) ? "Dit e-mailadres hoort niet bij Kring. Vraag een uitnodiging." : error.message);
+    $("#login-form").hidden = true; $("#code-form").hidden = false;
+    $("#l-msg").textContent = "Code verstuurd naar " + mail + ". Typ hem hierboven in (de app blijft open).";
+    $("#l-code").focus();
   }); };
+  $("#code-form").onsubmit = e => { e.preventDefault(); run(async () => {
+    const {error} = await st.sb.auth.verifyOtp({email: mail, token: $("#l-code").value.replace(/\D/g, ""), type: "email"});
+    if (error) throw new Error(/expired|invalid/i.test(error.message) ? "Code ongeldig of verlopen. Vraag een nieuwe code." : error.message);
+  }); };
+  $("#l-terug").onclick = () => { $("#code-form").hidden = true; $("#login-form").hidden = false; $("#l-code").value = ""; $("#l-msg").textContent = ""; };
 }
 function toonStart(st){
   verbergApp();
@@ -4899,4 +4917,40 @@ function laadScript(src){ return new Promise((ok, nok) => { const s = document.c
 </script>
 
 
+
+<div id="app-installeer" hidden style="position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:9999;background:#24493f;color:#f3f5f2;border-radius:14px;padding:14px 16px;box-shadow:0 6px 24px rgba(0,0,0,.25);font:14px/1.45 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:520px;margin:0 auto">
+  <div style="font-weight:600;font-size:15px;margin-bottom:4px">Zet Kring op je beginscherm</div>
+  <div id="app-uitleg"></div>
+  <div style="display:flex;gap:8px;margin-top:10px"><button id="app-knop" hidden style="flex:1;border:0;border-radius:10px;padding:10px;background:#c48a1f;color:#fff;font:inherit;font-weight:600">Installeren</button><button id="app-later" style="border:1px solid rgba(255,255,255,.4);border-radius:10px;padding:10px 14px;background:transparent;color:inherit;font:inherit">Niet nu</button></div>
+</div>
+<script>
+(function () {
+  const $i = (id) => document.getElementById(id);
+  const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  let later = 0; try { later = +localStorage.getItem("kring-app-later") || 0; } catch (e) {}
+  if (standalone || Date.now() - later < 30 * 864e5) return;
+  const ua = navigator.userAgent;
+  const ios = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const safari = ios && !/CriOS|FxiOS|EdgiOS/.test(ua);
+  let prompt = null;
+  const toon = () => { $i("app-installeer").hidden = false; };
+  if (ios) {
+    $i("app-uitleg").innerHTML = safari
+      ? "1. Tik onderaan op <b>Deel</b> (vierkant met pijl omhoog).<br>2. Kies <b>Zet op beginscherm</b>.<br>3. Open Kring vanaf je beginscherm en meld één keer aan met de code."
+      : "Open deze pagina in <b>Safari</b> en kies daar <b>Deel → Zet op beginscherm</b>.";
+    toon();
+  } else {
+    $i("app-uitleg").innerHTML = "Of via het menu van je browser: <b>App installeren</b>.";
+    addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); prompt = e; $i("app-knop").hidden = false; toon(); });
+    if (/Android/.test(ua)) toon();
+  }
+  $i("app-knop").addEventListener("click", async () => {
+    if (!prompt) return; prompt.prompt();
+    const keuze = await prompt.userChoice; prompt = null;
+    if (keuze.outcome === "accepted") $i("app-installeer").hidden = true;
+  });
+  $i("app-later").addEventListener("click", () => { try { localStorage.setItem("kring-app-later", String(Date.now())); } catch (e) {} $i("app-installeer").hidden = true; });
+  addEventListener("appinstalled", () => { $i("app-installeer").hidden = true; });
+})();
+</script>
 </body></html>

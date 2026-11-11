@@ -5,6 +5,8 @@ Eigen vervanger voor FamilyWall (en op termijn YNAB). Versie 12 + R5 · live sin
 **App:** https://clm1985.github.io/kring/ · **Database:** Supabase-project *Gezinsbudget*, schema `gezin` (schema `ynab` = YNAB-spiegel, enkel gelezen).
 
 ## Tabs
+Aanmelden met een code uit de mail (geen link), zodat je de app nooit verlaat.
+
 Vandaag · Agenda · Eten (weekmenu, gerechten, boodschappen/bestellijst, diepvries, voorraad) · Lijsten · Budget, plus **+** (snel toevoegen), weekoverleg en kindmodus.
 
 ## Bestanden
@@ -12,7 +14,7 @@ Vandaag · Agenda · Eten (weekmenu, gerechten, boodschappen/bestellijst, diepvr
 |---|---|
 | `index.html` | De volledige app in één bestand (geen build nodig voor GitHub Pages) |
 | `config.js` | Supabase-URL + publishable key. Leeg = demomodus in de browser |
-| `manifest.webmanifest`, `icon.svg` | Installeerbaar als app op het beginscherm |
+| `manifest.webmanifest`, `app/*.png`, `sw.js` | Installeerbaar als app (Android en iPhone), service worker: netwerk eerst, cache als reserve |
 | `supabase/migrations/20261111_gezin_kring_basis.sql` | Volledig schema `gezin` met RLS (toegepast als migratie `gezin_kring_basis`) |
 | `supabase/functions/recept-import` | Recept ophalen van een receptensite (JWT verplicht) |
 | `supabase/functions/ics-ophalen` | Externe ICS-agenda ophalen (JWT verplicht) |
