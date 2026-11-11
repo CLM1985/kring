@@ -4165,6 +4165,7 @@ class LocalStore {
   async setCheck(week, key, val){ const s = new Set(this.d.checks[week] || []); val ? s.add(key) : s.delete(key); this.d.checks[week] = [...s]; this.save(); }
   async loadProducten(){ return {producten: this.d.producten, koppeling: {...this.d.koppeling}}; }
   async setKoppeling(sleutel, product_id){ this.d.koppeling[sleutel] = {product_id, bevestigd: true}; this.save(); }
+  async nieuwProduct(p){ const id = "eigen-" + Date.now(); this.d.producten.push({ id, beschikbaar: true, inhoud: null, inhoud_eenheid: null, ...p }); this.save(); return id; }
   async receptVanWebsite(){ throw new Error("In de testversie kan de app geen andere websites lezen. Plak de ingrediënten hieronder."); }
   async reset(){ this.d = demoData(await laadSeed()); bwMigratie(this.d); Object.assign(this.d, demoAgenda()); Object.assign(this.d, demoGezin(this.d.leden)); this.d.diepvries = demoDiepvries(this.d); this.d.voorraad = demoVoorraad(); vrDemoItems(this.d.voorraad, this.d); await r5DemoMig(this.d); this.d.r5Mig1 = true; this.save(); }
 }
@@ -4225,6 +4226,9 @@ class SupaStore {
     const producten = this.ok(p).map(x => ({...x, id: x.id, kern: K.productKern(x.naam)}));
     const koppeling = {}; this.ok(k).forEach(x => koppeling[x.sleutel] = {product_id: x.product_id, bevestigd: true});
     return {producten, koppeling};
+  }
+  async nieuwProduct(p){
+    return this.ok(await this.g.from("producten").insert({ huishouden_id: this.h, naam: p.naam, afdeling: p.afdeling, prijs: p.prijs, prijs_per: p.prijs_per }).select("id").single()).id;
   }
   async setKoppeling(sleutel, product_id){
     this.ok(await this.g.from("ingredient_product").upsert({huishouden_id: this.h, sleutel, product_id, geen_product: !product_id}, {onConflict: "huishouden_id,sleutel"}));
@@ -4721,7 +4725,15 @@ function openKoppel(sleutels, start = 0){
     <div class="keuzes">${voorstel.map(regel).join("") || `<div class="muted">Geen voorstel gevonden.</div>`}</div>
     <div class="veld" style="margin-top:14px"><label for="kp-zoek">Zelf zoeken</label><input class="in" id="kp-zoek" type="search" placeholder="bv. gehakt, room, passata"></div>
     <div class="keuzes" id="kp-zoek-lijst"></div>
-    <p class="muted" style="font-size:.85rem">Staat het product er niet tussen? <a href="${K.zoekLink(it.naam)}" target="_blank" rel="noopener">Zoek in Collect&amp;Go</a>. Producten toevoegen kan in de echte versie.</p>
+    <p class="muted" style="font-size:.85rem">Staat het product er niet tussen? <a href="${K.zoekLink(it.naam)}" target="_blank" rel="noopener">Zoek in Collect&amp;Go</a>. </p>
+    <details class="nieuw-prod"><summary class="link">+ Nieuw product</summary>
+      <div class="stack" style="margin-top:8px">
+        <div class="veld"><label for="np-naam">Naam</label><input class="in" id="np-naam" value="${esc(it.naam)}" maxlength="120"></div>
+        <div class="veld"><label for="np-afd">Afdeling</label><select class="in" id="np-afd">${opties(AFD, K.afdelingVoor ? K.afdelingVoor(it.naam) : "Andere")}</select></div>
+        <div class="veld"><label for="np-prijs">Prijs (optioneel)</label><div class="zoekbalk"><input class="in" id="np-prijs" inputmode="decimal" placeholder="bv. 2,49">
+          <select class="in" id="np-per" aria-label="Prijs per" style="max-width:9rem"><option value="stuk">per stuk</option><option value="kg">per kg</option></select></div></div>
+        <div><button class="knop" data-nieuwprod>Toevoegen en koppelen</button></div>
+      </div></details>
     <div class="voet"><button class="knop sec links" data-geen>Geen product</button>${sleutels.length > 1 ? `<button class="knop sec" data-over>Overslaan</button>` : `<button class="knop sec" data-sluit>Sluiten</button>`}</div>`);
   const p = $("#paneel");
   p.oninput = e => { if (e.target.id === "kp-zoek"){ zoek = e.target.value; zoeklijst(); } };
@@ -4729,6 +4741,14 @@ function openKoppel(sleutels, start = 0){
     const t = e.target.closest("button"); if (!t) return;
     if (t.dataset.pid || "geen" in t.dataset) run(async () => { await db.setKoppeling(sl, t.dataset.pid || null); await herlaadProducten(); if (sleutels.length > 1) openKoppel(sleutels, start + 1); else { sluitPaneel(); render(); toast("Gekoppeld"); } });
     else if ("over" in t.dataset) openKoppel(sleutels, start + 1);
+    else if ("nieuwprod" in t.dataset){
+      const naam = $("#np-naam").value.trim(); if (!naam){ $("#np-naam").focus(); return toast("Vul een naam in"); }
+      const pr = $("#np-prijs").value.trim().replace(",", "."), prijs = pr === "" ? null : Number(pr);
+      if (prijs != null && !(prijs >= 0 && prijs < 10000)) return toast("Prijs klopt niet");
+      run(async () => { const id = await db.nieuwProduct({ naam, afdeling: $("#np-afd").value, prijs, prijs_per: $("#np-per").value });
+        await db.setKoppeling(sl, id); await herlaadProducten(); toast("Product toegevoegd en gekoppeld");
+        if (sleutels.length > 1) openKoppel(sleutels, start + 1); else { sluitPaneel(); render(); } });
+    }
   };
 }
 
