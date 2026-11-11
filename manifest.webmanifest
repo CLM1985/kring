@@ -1,9 +1,9 @@
 {
   "name": "Kring",
   "short_name": "Kring",
-  "description": "Weekmenu, gerechten en boodschappen van het gezin",
+  "description": "Gezinsplatform: agenda, eten, lijsten, voorraad en budget",
   "lang": "nl",
-  "start_url": "./#menu",
+  "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "background_color": "#f3f5f2",
