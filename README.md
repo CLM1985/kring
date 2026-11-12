@@ -7,7 +7,7 @@ Eigen vervanger voor FamilyWall (en op termijn YNAB). Versie 12 + R5 · live sin
 ## Tabs
 Aanmelden met een code uit de mail (geen link), zodat je de app nooit verlaat.
 
-Vandaag · Agenda · Eten (weekmenu, gerechten, boodschappen/bestellijst, diepvries, voorraad) · Lijsten · Budget, plus **+** (snel toevoegen), weekoverleg en kindmodus.
+Vandaag · Agenda · Eten (weekmenu, gerechten, boodschappen/bestellijst, diepvries, voorraad) · Lijsten · Budget, plus **+** (snel toevoegen), Eilandraad (weekoverleg) en kindmodus.
 
 ## Bestanden
 | Bestand | Inhoud |
