@@ -332,6 +332,42 @@ details.voorraad[open] summary h3::after{content:"verbergen"}
 .rek small{display:block;color:var(--muted);font-size:.78rem;text-align:right}
 .rek.sel{background:color-mix(in srgb, var(--primary) 8%, var(--surface));border-radius:6px}
 .rapport{margin-bottom:22px}
+/* Uitgavenverdeling (halve donut + meterlijst) */
+:root{ --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --s5:#e87ba4; --s6:#6250d6; --s-rest:#a3ada8 }
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){ --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181; --s6:#9085e9; --s-rest:#5f6c67 }}
+:root[data-theme="dark"]{ --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181; --s6:#9085e9; --s-rest:#5f6c67 }
+.bv-kop{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;justify-content:space-between}
+.bv-kop h2{margin:0}
+.bv-ctl{display:flex;flex-wrap:wrap;gap:8px}
+.bv-cijfers{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:8px;margin:12px 0}
+.bv-cijfers div{background:var(--sunk);border-radius:10px;padding:8px 10px}
+.bv-cijfers b{display:block;font-size:1.05rem;font-variant-numeric:tabular-nums}
+.bv-cijfers .neg{color:var(--danger)}
+.bv-grafiek{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:12px 20px;align-items:center}
+@media (max-width:640px){ .bv-grafiek{grid-template-columns:1fr} }
+.bv-donut{width:100%;max-width:420px;height:auto;display:block;margin:0 auto}
+.bv-donut path{stroke:var(--bg);stroke-width:2;stroke-linejoin:round;transition:opacity .15s}
+.bv-donut:hover path{opacity:.45}
+.bv-donut path:hover{opacity:1}
+.bv-donut .tot{font-size:22px;font-weight:700;fill:var(--fg);font-variant-numeric:tabular-nums}
+.bv-donut .sub{font-size:11px;fill:var(--muted)}
+.bv-leg{list-style:none;margin:0;padding:0;display:grid;gap:4px;max-width:380px;width:100%}
+.bv-leg li{display:grid;grid-template-columns:12px 3.2em minmax(0,1fr) auto;gap:8px;align-items:center;font-size:.9rem}
+.bv-leg i{width:12px;height:12px;border-radius:3px;display:block}
+.bv-leg .pct,.bv-leg .bdr{font-variant-numeric:tabular-nums;color:var(--muted)}
+.bv-leg .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bv-lijst{margin-top:14px;border-top:1px solid var(--line)}
+.bv-rij{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;padding:9px 0;border-bottom:1px solid var(--line)}
+.bv-rij .nm{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bv-rij .waarde{text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
+.bv-rij .meter{grid-column:1 / -1;height:8px;background:var(--sunk);border-radius:4px;overflow:hidden}
+.bv-rij .meter i{display:block;height:100%;background:var(--primary);border-radius:4px}
+.bv-rij.over .meter i{background:var(--danger)}
+.bv-rij .uitleg{font-size:.85rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.bv-rij .uitleg b{color:var(--fg)}
+.bv-rij .rechts{text-align:right;font-size:.85rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.bv-rij.totaal{background:var(--sunk);padding:9px 10px;border-radius:10px;margin:8px 0;border-bottom:0}
+
 .rapport h2{font-size:1.15rem}
 .hbars{display:flex;flex-direction:column;gap:6px;margin-top:8px}
 .hb{display:grid;grid-template-columns:150px 1fr 90px;gap:8px;align-items:center;font-size:.88rem}
@@ -1498,12 +1534,74 @@ function budgetRapporten() {
       return `<rect x="${x0}" y="${T + ih - h1}" width="${w}" height="${h1}" rx="3" class="b-in"><title>${MAANDNAAM(k)} inkomen: ${euro(ink[i])}</title></rect><rect x="${x0 + w + 2}" y="${T + ih - h2}" width="${w}" height="${h2}" rx="3" class="b-uit"><title>${MAANDNAAM(k)} uitgaven: ${euro(trend[i])}</title></rect>`; }).join("")}${mm.map((_, i) => xlab(i)).join("")}</svg>`;
   const somI = ink.reduce((a, b) => a + b, 0), somU = trend.reduce((a, b) => a + b, 0);
   $("#bview").innerHTML = `
-    <section class="rapport"><h2>Uitgaven in ${MAANDNAAM(eind)}</h2><p class="muted">Totaal ${euro(totaalUit)}</p>${hbars}</section>
+    ${budgetVerdeling(B, eind)}
     <section class="rapport"><h2>Uitgaven per maand</h2><p class="muted">Gemiddeld ${euro(Math.round(somU / mm.length))} per maand over ${mm.length} maanden</p><div class="grafiek-wrap">${svg1}</div></section>
     <section class="rapport"><h2>Inkomen en uitgaven</h2><div class="legende"><span><i class="b-in"></i>Inkomen</span><span><i class="b-uit"></i>Uitgaven</span></div><div class="grafiek-wrap">${svg2}</div>
       <p>Over ${mm.length} maanden: inkomen ${euro(somI)}, uitgaven ${euro(somU)}, ${somI - somU >= 0 ? "overschot" : "tekort"} <b>${euro(somI - somU)}</b>.</p>
       <details><summary>Cijfers per maand</summary><div class="btabel-wrap"><table class="btabel"><thead><tr><th scope="col">Maand</th><th scope="col">Inkomen</th><th scope="col">Uitgaven</th><th scope="col">Saldo</th></tr></thead><tbody>${mm.map((k, i) => `<tr><th scope="row">${MAANDNAAM(k)}</th><td>${euro(ink[i])}</td><td>${euro(trend[i])}</td><td>${euro(ink[i] - trend[i])}</td></tr>`).join("")}</tbody></table></div></details></section>`;
 }
+
+/* Uitgavenverdeling: halve donut (deel van het geheel, max. 6 + Overige) + meterlijst werkelijk vs budget */
+function budgetVerdeling(B, eind){
+  const per = S.bperiode || "jaar", wat = S.bper || "groep";
+  const jaar = eind.slice(0, 4);
+  const mm = per === "jaar" ? B.maanden.filter(k => k.startsWith(jaar) && k <= eind) : [eind];
+  const nM = Math.max(1, mm.length);
+  const sleutel = c => wat === "groep" ? c.groep_id : c.id;
+  const naamVan = id => wat === "groep" ? ((S.budget.groepen.find(g => g.id === id) || {}).naam || "Zonder groep") : ((S.budget.categorieen.find(c => c.id === id) || {}).naam || "?");
+  const tot = new Map();
+  for (const c of S.budget.categorieen) {
+    if (c.activiteit_per_maand) continue;   // kredietkaartbetalingen: geen uitgave (anders dubbel geteld)
+    const k = sleutel(c); const t = tot.get(k) || { id: k, uit: 0, budget: 0 };
+    for (const m of mm) { const x = B.per[m] && B.per[m].cat[c.id]; if (x) { t.uit += -x.activiteit; t.budget += x.toegewezen; } }
+    tot.set(k, t);
+  }
+  const rijen = [...tot.values()].map(t => ({ ...t, naam: naamVan(t.id) })).filter(t => t.uit > 0 || t.budget > 0).sort((a, b) => b.uit - a.uit);
+  const pos = rijen.filter(t => t.uit > 0), som = pos.reduce((s, t) => s + t.uit, 0), budSom = rijen.reduce((s, t) => s + Math.max(0, t.budget), 0);
+  const kleuren = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)", "var(--s6)"];
+  const delen = pos.slice(0, 6).map((t, i) => ({ naam: t.naam, v: t.uit, kleur: kleuren[i] }));
+  const rest = pos.slice(6).reduce((s, t) => s + t.uit, 0);
+  if (rest > 0) delen.push({ naam: `Overige (${pos.length - 6})`, v: rest, kleur: "var(--s-rest)" });
+  // halve donut: van links (180°) over boven naar rechts (360°)
+  const cx = 160, cy = 150, R = 140, r = 84;
+  const pt = (a, rad) => `${(cx + rad * Math.cos(a)).toFixed(2)} ${(cy + rad * Math.sin(a)).toFixed(2)}`;
+  let a0 = Math.PI;
+  const paden = som > 0 ? delen.map(d => {
+    const a1 = a0 + Math.PI * d.v / som, groot = a1 - a0 > Math.PI ? 1 : 0;
+    const p = `<path d="M${pt(a0, R)} A${R} ${R} 0 ${groot} 1 ${pt(a1, R)} L${pt(a1, r)} A${r} ${r} 0 ${groot} 0 ${pt(a0, r)}Z" fill="${d.kleur}"><title>${esc(d.naam)}: ${euro(d.v)} (${Math.round(d.v / som * 100)}%)</title></path>`;
+    a0 = a1; return p; }).join("") : `<path d="M${pt(Math.PI, R)} A${R} ${R} 0 0 1 ${pt(2 * Math.PI, R)} L${pt(2 * Math.PI, r)} A${r} ${r} 0 0 0 ${pt(Math.PI, r)}Z" fill="var(--sunk)"/>`;
+  const periodeTxt = per === "jaar" ? `${jaar} t.e.m. ${MAANDNAAM(eind).split(" ")[0]}` : MAANDNAAM(eind);
+  const svg = `<svg class="bv-donut" viewBox="0 0 320 160" role="img" aria-label="Verdeling van de uitgaven ${esc(periodeTxt)}">${paden}
+    <text x="${cx}" y="${cy - 22}" text-anchor="middle" class="tot">${euroKort(som)}</text><text x="${cx}" y="${cy - 4}" text-anchor="middle" class="sub">uitgegeven</text></svg>`;
+  const pct = v => som > 0 ? Math.round(v / som * 100) + "%" : "–";
+  const leg = `<ul class="bv-leg">${delen.map(d => `<li><i style="background:${d.kleur}"></i><span class="pct">${pct(d.v)}</span><span class="nm" title="${esc(d.naam)}">${esc(d.naam)}</span><span class="bdr">${euroKort(d.v)}</span></li>`).join("")}</ul>`;
+  const verschil = budSom - som;
+  const cijfers = `<div class="bv-cijfers"><div><span class="lbl-klein">Budget</span><b>${euroKort(budSom)}</b></div><div><span class="lbl-klein">Werkelijk</span><b>${euroKort(som)}</b></div>
+    <div><span class="lbl-klein">${verschil >= 0 ? "Nog over" : "Te veel"}</span><b class="${verschil < 0 ? "neg" : ""}">${euroKort(Math.abs(verschil))}</b></div>${per === "jaar" ? `<div><span class="lbl-klein">Per maand</span><b>${euroKort(Math.round(som / nM))}</b></div>` : ""}</div>`;
+  const meter = (t, extra) => { const over = t.budget > 0 ? t.uit > t.budget : t.uit > 0, w = t.budget > 0 ? Math.min(100, t.uit / t.budget * 100) : (t.uit > 0 ? 100 : 0);
+    return `<div class="bv-rij ${over ? "over" : ""} ${extra || ""}"><span class="nm">${esc(t.naam)}</span><span class="waarde">${euroKort(t.uit)}</span>
+      <span class="meter" role="img" aria-label="${esc(t.naam)}: ${euroKort(t.uit)} van ${euroKort(t.budget)}"><i style="width:${w.toFixed(1)}%"></i></span>
+      <span class="uitleg"><b>${euroKort(t.uit)}</b> van ${euroKort(Math.max(0, t.budget))} budget${over ? ` · <b style="color:var(--danger)">${euroKort(t.uit - Math.max(0, t.budget))} over</b>` : ""}</span>
+      <span class="rechts">${per === "jaar" ? `${euroKort(Math.round(t.uit / nM))}/m` : ""}</span></div>`; };
+  const lijst = rijen.filter(t => t.uit > 0);
+  const toon = S.bvAlles ? lijst : lijst.slice(0, 10);
+  const seg = (attr, waarde, opties) => `<div class="seg" role="group">${opties.map(([k, l]) => `<button ${attr}="${k}" aria-pressed="${waarde === k}">${l}</button>`).join("")}</div>`;
+  return `<section class="rapport bv">
+    <div class="bv-kop"><h2>Uitgaven ${esc(periodeTxt)}</h2><div class="bv-ctl">${seg("data-bperiode", per, [["maand", "Maand"], ["jaar", "Jaar"]])}${seg("data-bper", wat, [["groep", "Per groep"], ["categorie", "Per categorie"]])}</div></div>
+    ${cijfers}
+    <div class="bv-grafiek">${svg}${leg}</div>
+    <div class="bv-lijst">${meter({ naam: "Uitgaven totaal", uit: som, budget: budSom }, "totaal")}${toon.map(t => meter(t)).join("")}</div>
+    ${lijst.length > 10 ? `<button class="link" data-bvalles style="margin-top:8px">${S.bvAlles ? "Toon minder" : `Toon alle ${lijst.length}`}</button>` : ""}
+  </section>`;
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-bperiode],[data-bper],[data-bvalles]"); if (!b || S.tab !== "budget") return;
+  if (b.dataset.bperiode) S.bperiode = b.dataset.bperiode;
+  else if (b.dataset.bper) S.bper = b.dataset.bper;
+  else S.bvAlles = !S.bvAlles;
+  try { pref.set("bverdeling", { p: S.bperiode, w: S.bper }); } catch(_) {}
+  budgetRapporten();
+});
 
 /* Klein overzicht voor Vandaag */
 function budgetKort() {
@@ -4457,7 +4555,7 @@ Object.assign(LocalStore.prototype, window.R5_LOCAL);
 Object.assign(SupaStore.prototype, window.R5_SUPA);
 
 /* ================= Toestand ================= */
-const S = { tab: "vandaag", budgetView: pref.get("budgetView", "plan"), bmaand: null, bfilter: "alle", bcat: null, brek: null, bzoek: "", budget: null,
+const S = { tab: "vandaag", budgetView: pref.get("budgetView", "plan"), bperiode: (pref.get("bverdeling", {}) || {}).p || "jaar", bper: (pref.get("bverdeling", {}) || {}).w || "groep", bmaand: null, bfilter: "alle", bcat: null, brek: null, bzoek: "", budget: null,
             lijsten: [], activiteit: [], lijstOpen: null, ik: pref.get("ik", null), agendaView: pref.get("agendaView", "week"), maand: new Date(), verborgen: pref.get("verborgen", []),
             leden: [], kalenders: [], afspraken: [], taken: [], verjaardagen: [], week: maandag(new Date()), gerechten: [], menu: [], extra: [], checks: new Set(), producten: [], koppeling: {},
             zoek: "", cat: "", onvolledig: false, zijzoek: "", verberg: pref.get("verberg", false),
