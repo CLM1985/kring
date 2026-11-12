@@ -449,6 +449,16 @@ document.addEventListener("click", e => {
     await weg(); await herlaadWeek(); render(); toast(`Op de boodschappenlijst van ${pwLabel()}`); });
 });
 
+/* Snelkoppeling "Inspreken" (icoon ingedrukt houden of op het startscherm): ./?actie=inspreken */
+function snelInspreken(){
+  if (new URLSearchParams(location.search).get("actie") !== "inspreken") return;
+  history.replaceState(null, "", location.pathname + "#vandaag");
+  S.tab = "vandaag"; render();
+  const knop = document.querySelector('#umh-form [data-mic]');
+  if (!knop) return toast("Inspreken kan niet in deze browser. Typ je notitie.");
+  setTimeout(() => spraakStart(knop), 300);
+}
+
 /* ---------- Verjaardag binnen 7 dagen: melding bovenaan Vandaag ---------- */
 function verjMelding(verj){
   const kort = (verj || []).filter(x => x.n.dagen <= 7); if (!kort.length) return "";
@@ -5076,6 +5086,7 @@ function laadScript(src){ return new Promise((ok, nok) => { const s = document.c
     vsAuto();
     await r5Init();
     run(vrGedeeldTicket);
+    snelInspreken();
   } catch(e){ console.error(e); $("#view").innerHTML = `<div class="leegstaat">De app kon niet starten: ${esc(e.message)}</div>`; }
 })();
 </script>
