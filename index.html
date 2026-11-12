@@ -818,7 +818,7 @@ function viewAgenda() {
   const chips = [...S.kalenders, ...SYS].map(k => `<button class="chip ag-chip" data-kal="${k.id}" aria-pressed="${zichtbaar(k.id)}" style="--k:${k.kleur}"><span class="dot"></span>${esc(k.naam)}</button>`).join("");
   const kop = `<div class="ag-kop">
       <div class="seg" role="group" aria-label="Weergave"><button data-agview="week" aria-pressed="${S.agendaView === "week"}">Week</button><button data-agview="maand" aria-pressed="${S.agendaView === "maand"}">Maand</button></div>
-      <span class="acties" style="margin:0"><button class="knop sec" data-overleg>Weekoverleg</button><button class="knop" data-nieuwitem>+ Nieuw</button></span></div>
+      <span class="acties" style="margin:0"><button class="knop sec" data-overleg>Eilandraad</button><button class="knop" data-nieuwitem>+ Nieuw</button></span></div>
     <div class="chips ag-chips">${chips}</div>`;
   // Aandacht: taken te laat + verjaardagen binnen 14 dagen
   // Te laat: eenmalige taken van de voorbije 30 dagen; herhalende enkel het laatste gemiste voorkomen van de voorbije 7 dagen
@@ -3211,7 +3211,7 @@ function vsVandaagKaart(kaart){
   return kaart(`Weekvoorstel ${vsDagLabel(S.vs.start)} – ${vsDagLabel(S.vs.einde)}`,
     `<ul class="vlijst">${d.slice(0, 4).map(x => `<li><span class="muted">${VS_KORT[x.weekdag]}</span><span style="flex:1">${x.vrij ? `<i class="muted">${esc(x.vrij)}</i>` : esc(vsNaam(x))}</span></li>`).join("")}</ul>
      <button class="knop klein" data-voorstel style="margin-top:8px">Bekijken en overnemen</button>`,
-    `<span class="muted" style="font-size:.85rem">voor het overleg</span>`);
+    `<span class="muted" style="font-size:.85rem">voor de Eilandraad</span>`);
 }
 const vsNaam = x => x.gerecht_id ? ((gerecht(x.gerecht_id) || {}).naam || "?") : (x.vrije_tekst || "—");
 
@@ -3266,8 +3266,8 @@ function vsInstHtml(){
   const dag = (id, v, van) => `<select class="in" id="${id}" ${kan ? "" : "disabled"}>${VS_DAGEN.slice(1).map((n, k) => `<option value="${k + 1}" ${k + 1 === v ? "selected" : ""}>${n}</option>`).join("")}</select>`;
   return `<div class="lbl-klein" style="margin-top:6px">Weekvoorstel${kan ? "" : " (enkel de beheerder kan dit wijzigen)"}</div>
     <fieldset class="stack vs-inst" style="border:0;padding:0;margin:0" ${kan ? "" : "disabled"}>
-      <label class="toggle"><input type="checkbox" id="vs-auto" ${i.automatisch ? "checked" : ""}> Automatisch klaarzetten op de overlegdag</label>
-      <div class="rij"><div class="veld"><label for="vs-dag">Overlegdag</label>${dag("vs-dag", i.dag)}</div>
+      <label class="toggle"><input type="checkbox" id="vs-auto" ${i.automatisch ? "checked" : ""}> Automatisch klaarzetten op de dag van de Eilandraad</label>
+      <div class="rij"><div class="veld"><label for="vs-dag">Dag van de Eilandraad</label>${dag("vs-dag", i.dag)}</div>
         <div class="veld"><label for="vs-start">Planning vanaf</label>${dag("vs-start", i.startdag)}</div></div>
       <div class="rij"><div class="veld"><label for="vs-eters">Eters</label><input class="in" id="vs-eters" type="number" min="1" max="20" step="1" value="${i.eters || S.leden.length || 4}"></div>
         <div class="veld"><label for="vs-weekend">Weekend</label><select class="in" id="vs-weekend"><option value="avond" ${i.weekendMoment !== "middag" ? "selected" : ""}>warm 's avonds</option><option value="middag" ${i.weekendMoment === "middag" ? "selected" : ""}>warm 's middags</option></select></div></div>
@@ -3284,7 +3284,7 @@ document.addEventListener("click", e => {
   if (!("vsinstbewaar" in b.dataset)) return;
   const dagv = +$("#vs-dag").value, startv = +$("#vs-start").value, eters = +$("#vs-eters").value;
   const fout = m => { const f = $("#vs-fout"); f.textContent = m; f.hidden = false; };
-  if (dagv === startv) return fout("De overlegdag moet vóór de eerste plandag liggen.");
+  if (dagv === startv) return fout("De dag van de Eilandraad moet vóór de eerste plandag liggen.");
   if (!(eters >= 1 && eters <= 20)) return fout("Eters: tussen 1 en 20.");
   const w = { automatisch: $("#vs-auto").checked, dag: dagv, startdag: startv, dagen: 7, eters, weekendMoment: $("#vs-weekend").value,
     nietHerhalenWeken: +$("#vs-herhaal").value, uitgeslotenWoorden: $("#vs-woorden").value.split(",").map(x => x.trim().toLowerCase()).filter(Boolean), uitgesloten: [...document.querySelectorAll("[data-vsuit]:checked")].map(x => x.dataset.vsuit) };
@@ -3605,8 +3605,8 @@ function r5OverlegKaart(kaart) {
     ? `<p>Afgerond ✓ <span class="muted">${esc((lid(ov.afgerond_door) || {}).naam || "")}</span></p><button class="knop sec klein" data-overleg>Bekijken</button>`
     : ov && ov.stap > 1
       ? `<p>Bezig: stap ${ov.stap} van 5 · ${esc(R5_STAPPEN[ov.stap - 1])}</p><button class="knop klein" data-overleg>Verder</button>`
-      : `<p class="muted" style="margin-top:0">Samen ±10 minuten: terugblik, agenda, verdelen en eten.</p><button class="knop klein" data-overleg>Start weekoverleg</button>`;
-  return kaart(`Weekoverleg ${periode}`, inhoud);
+      : `<p class="muted" style="margin-top:0">Samen ±10 minuten: terugblik, agenda, verdelen en eten.</p><button class="knop klein" data-overleg>Start Eilandraad</button>`;
+  return kaart(`Eilandraad ${periode}`, inhoud);
 }
 
 async function openOverleg(stap) {
@@ -3616,11 +3616,11 @@ async function openOverleg(stap) {
   ov.samenvatting = ov.samenvatting || {};
   if (stap) ov.stap = stap;
   const s = ov.stap || 1;
-  const kop = `<div class="paneel-kop"><h2>Weekoverleg ${r5DagKort(S.vsStart)} – ${r5DagKort(r5Einde())}</h2><button class="ib" data-sluit aria-label="Sluiten">✕</button></div>
+  const kop = `<div class="paneel-kop"><h2>Eilandraad ${r5DagKort(S.vsStart)} – ${r5DagKort(r5Einde())}</h2><button class="ib" data-sluit aria-label="Sluiten">✕</button></div>
     <ol class="ov-stappen">${R5_STAPPEN.map((n, i) => `<li><button class="${i + 1 === s ? "nu" : i + 1 < s ? "klaar" : ""}" data-ovstap="${i + 1}" aria-current="${i + 1 === s ? "step" : "false"}"><span>${i + 1}</span>${n}</button></li>`).join("")}</ol>`;
   const body = [ovTerugblik, ovKomend, ovVerdelen, ovEten, ovAfspraken][s - 1]();
   const voet = `<div class="voet">${s > 1 ? `<button class="knop sec links" data-ovstap="${s - 1}">‹ ${R5_STAPPEN[s - 2]}</button>` : `<span class="links"></span>`}
-    ${s < 5 ? `<button class="knop" data-ovstap="${s + 1}">${R5_STAPPEN[s]} ›</button>` : ov.afgerond ? `<button class="knop sec" data-sluit>Sluiten</button>` : `<button class="knop" data-ovaf>Overleg afronden</button>`}</div>`;
+    ${s < 5 ? `<button class="knop" data-ovstap="${s + 1}">${R5_STAPPEN[s]} ›</button>` : ov.afgerond ? `<button class="knop sec" data-sluit>Sluiten</button>` : `<button class="knop" data-ovaf>Eilandraad afronden</button>`}</div>`;
   const scroll = !$("#sheet").hidden && $("#paneel").querySelector(".ov-stappen") ? $("#paneel").scrollTop : 0;
   openPaneel(kop + `<div class="ov-body">${body}</div>` + voet);
   const p = $("#paneel"); p.scrollTop = stap ? 0 : scroll;
@@ -3728,8 +3728,8 @@ function ovKlik(e) {
   if ("ovaf" in b.dataset) run(async () => {
     ov.afgerond = new Date().toISOString(); ov.afgerond_door = S.ik; ov.stap = 5;
     const ta = $("#ov-notities"); if (ta) ov.notities = ta.value;
-    await db.bewaarOverleg(ov); await db.log(`rondde het weekoverleg ${r5DagKort(S.vsStart)} – ${r5DagKort(r5Einde())} af`);
-    await herlaadGezin(); sluitPaneel(); render(); toast("Weekoverleg afgerond. Fijne week!");
+    await db.bewaarOverleg(ov); await db.log(`rondde de Eilandraad ${r5DagKort(S.vsStart)} – ${r5DagKort(r5Einde())} af`);
+    await herlaadGezin(); sluitPaneel(); render(); toast("Eilandraad afgerond. Fijne week!");
   });
 }
 function ovWijzig(e) {
