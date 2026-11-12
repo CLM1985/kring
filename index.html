@@ -391,7 +391,7 @@ function splitsBoodschappen(t){
 /* ---------- Inspreken (spraakherkenning van de browser) ---------- */
 const SPRAAK = window.SpeechRecognition || window.webkitSpeechRecognition || null;
 let spraakNu = null;
-function micKnop(id){ return SPRAAK ? `<button type="button" class="mic" data-mic="${id}" aria-label="Inspreken" title="Inspreken">🎤</button>` : ""; }
+function micKnop(id, auto){ return SPRAAK ? `<button type="button" class="mic" data-mic="${id}" ${auto ? "data-micauto" : ""} aria-label="Inspreken" title="Inspreken">🎤</button>` : ""; }
 function spraakStop(){ if (spraakNu){ try { spraakNu.rec.stop(); } catch(e){} } }
 function spraakStart(knop){
   const veld = document.getElementById(knop.dataset.mic); if (!veld) return;
@@ -406,7 +406,11 @@ function spraakStart(knop){
   rec.onerror = e => { const m = { "not-allowed": "Geef Kring toegang tot de microfoon", "service-not-allowed": "Inspreken is hier niet beschikbaar", "no-speech": "Niets gehoord", "network": "Inspreken heeft internet nodig", "audio-capture": "Geen microfoon gevonden of hij is in gebruik", "language-not-supported": "Nederlands wordt hier niet ondersteund" }[e.error];
     fout = true; if (e.error !== "aborted") toast(m || `Inspreken lukt niet (${e.error})`); };
   rec.onend = () => { if (!gehoord && !fout) toast("Niets gehoord. Tik op 🎤 en spreek meteen");
-    knop.classList.remove("aan"); knop.setAttribute("aria-pressed", "false"); if (spraakNu && spraakNu.rec === rec) spraakNu = null; veld.focus(); };
+    knop.classList.remove("aan"); knop.setAttribute("aria-pressed", "false"); if (spraakNu && spraakNu.rec === rec) spraakNu = null;
+    const f = veld.form;
+    if (gehoord && "micauto" in knop.dataset && f && veld.value.trim()) { f.requestSubmit ? f.requestSubmit() : f.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true })); }   // inspreken = meteen bewaren
+    else if (!/Android|iPhone|iPad/i.test(navigator.userAgent)) veld.focus();   // op gsm geen toetsenbord laten opspringen
+  };
   try { rec.start(); } catch(e){ return toast("Inspreken lukt niet"); }
   spraakNu = { rec, knop }; knop.classList.add("aan"); knop.setAttribute("aria-pressed", "true");
 }
@@ -423,15 +427,15 @@ function umhKaart(kaart){
   const l = umhLijst(), items = l ? l.items.filter(i => !i.klaar) : [];
   const naar = (k, t) => `<button class="chip" data-umhnaar="${k}">${t}</button>`;
   return kaart(`Uit mijn hoofd${items.length ? ` <span class="muted" style="font-weight:400">(${items.length})</span>` : ""}`, `
-    <form class="umh-form" id="umh-form"><div class="met-mic"><input class="in" id="umh-in" placeholder="Iets dat je niet wilt vergeten…" maxlength="300" autocomplete="off" aria-label="Snel noteren">${micKnop("umh-in")}</div><button class="knop" aria-label="Noteren">+</button></form>
+    <form class="umh-form" id="umh-form"><div class="met-mic"><input class="in" id="umh-in" placeholder="Iets dat je niet wilt vergeten…" maxlength="300" autocomplete="off" aria-label="Snel noteren">${micKnop("umh-in", true)}</div><button class="knop" aria-label="Noteren">+</button></form>
     ${items.length ? `<ul class="umh-lijst">${items.map(i => `<li data-umh="${i.id}"><span class="umh-tekst">${esc(i.tekst)}</span><span class="umh-acties">${naar("taak", "Taak")}${naar("boodschap", "Boodschap")}${naar("afspraak", "Afspraak")}<button class="ib" data-umhweg aria-label="Wegdoen" title="Wegdoen">🗑</button></span></li>`).join("")}</ul>`
-      : `<p class="muted" style="font-size:.86rem;margin:8px 0 0">Enkel jij ziet dit. Maak er later een taak, boodschap of afspraak van.</p>`}`);
+      : `<p class="muted" style="font-size:.86rem;margin:8px 0 0">Typ of tik op 🎤: wat je inspreekt, wordt meteen bewaard. Enkel jij ziet dit.</p>`}`);
 }
 document.addEventListener("submit", e => {
   if (e.target.id !== "umh-form") return;
   e.preventDefault(); spraakStop();
   const v = $("#umh-in").value.trim(); if (!v) return $("#umh-in").focus();
-  run(async () => { const l = await umhZorgLijst(); await db.bewaarItem(l.id, { tekst: v, klaar: false, lid_id: null, deadline: null }); await herlaadGezin(); render(); const i = $("#umh-in"); if (i) i.focus(); });
+  run(async () => { const l = await umhZorgLijst(); await db.bewaarItem(l.id, { tekst: v, klaar: false, lid_id: null, deadline: null }); await herlaadGezin(); render(); toast("Genoteerd"); });
 });
 document.addEventListener("click", e => {
   const b = e.target.closest("[data-umhnaar],[data-umhweg]"); if (!b) return;
