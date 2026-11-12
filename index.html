@@ -100,6 +100,21 @@ body.breed .menu-grid{grid-template-columns:minmax(0,1fr) 340px}
 .slot.vrij .titel{font-style:italic;font-weight:400}
 .slot:hover{border-color:var(--primary)}
 .slotwrap{position:relative;min-width:0}
+.met-mic{position:relative;min-width:0}
+.met-mic .in{padding-right:44px;width:100%}
+.mic{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:36px;height:36px;border-radius:50%;border:0;background:transparent;font-size:1.05rem;cursor:pointer;color:var(--muted)}
+.mic.aan{background:var(--danger);color:#fff;animation:mic-puls 1.2s ease-in-out infinite}
+@keyframes mic-puls{50%{opacity:.6}}
+.umh-form{display:grid;grid-template-columns:1fr auto;gap:8px}
+.umh-lijst{list-style:none;margin:10px 0 0;padding:0}
+.umh-lijst li{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:8px 0;border-top:1px solid var(--line)}
+.umh-tekst{flex:1 1 12rem;min-width:0;overflow-wrap:anywhere}
+.umh-acties{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.umh-acties .chip{padding:4px 10px;font-size:.82rem}
+.verj-melding{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 14px}
+.verj-melding span{border:1px solid var(--accent, var(--line));border-radius:999px;padding:6px 12px;font-size:.92rem;background:var(--card, transparent)}
+.snelkeuze,.vs-snel{margin:0}
+.vs-snel{flex-basis:100%;padding:6px 0 2px}
 .slotwrap .slot{padding-right:40px}
 .slot-x{position:absolute;top:6px;right:6px;width:30px;height:30px;border-radius:50%;border:0;background:transparent;color:var(--muted);font-size:1rem;line-height:1;cursor:pointer}
 .slot-x:hover,.slot-x:focus-visible{background:var(--line);color:var(--fg)}
@@ -364,6 +379,77 @@ details.voorraad[open] summary h3::after{content:"verbergen"}
 <div class="toast" id="toast" hidden></div>
 
 <script src="config.js"></script>
+<script>/* Kring – snel noteren ("Uit mijn hoofd"), inspreken, snelkeuzes en verjaardagsmelding */
+const SNELKEUZES = ["Restjes", "Frietjes", "Takeaway", "Uit eten", "Feestje", "Soep"];
+const UMH_NAAM = "Uit mijn hoofd";
+
+/* Boodschappen: "melk, wc-papier en tomaten" → 3 regels */
+function splitsBoodschappen(t){
+  return String(t || "").split(/\s*(?:,|;|\n|\ben\b|\bplus\b)\s*/i).map(x => x.trim().replace(/[.!?]+$/, "")).filter(x => x.length > 0).slice(0, 30);
+}
+
+/* ---------- Inspreken (spraakherkenning van de browser) ---------- */
+const SPRAAK = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+let spraakNu = null;
+function micKnop(id){ return SPRAAK ? `<button type="button" class="mic" data-mic="${id}" aria-label="Inspreken" title="Inspreken">🎤</button>` : ""; }
+function spraakStop(){ if (spraakNu){ try { spraakNu.rec.stop(); } catch(e){} } }
+function spraakStart(knop){
+  const veld = document.getElementById(knop.dataset.mic); if (!veld) return;
+  if (spraakNu){ const zelfde = spraakNu.knop === knop; spraakStop(); if (zelfde) return; }
+  const rec = new SPRAAK(); rec.lang = "nl-BE"; rec.interimResults = true; rec.continuous = true; rec.maxAlternatives = 1;
+  const basis = veld.value.trim() ? veld.value.trim() + " " : "";
+  let vast = "";
+  rec.onresult = e => { let tijdelijk = ""; for (let k = e.resultIndex; k < e.results.length; k++){ const r = e.results[k]; if (r.isFinal) vast += r[0].transcript; else tijdelijk += r[0].transcript; }
+    veld.value = (basis + vast + tijdelijk).replace(/\s+/g, " ").trimStart(); veld.dispatchEvent(new Event("input", { bubbles: true })); };
+  rec.onerror = e => { const m = { "not-allowed": "Geef Kring toegang tot de microfoon", "service-not-allowed": "Inspreken is hier niet beschikbaar", "no-speech": "Niets gehoord", "network": "Inspreken heeft internet nodig" }[e.error];
+    if (m) toast(m); };
+  rec.onend = () => { knop.classList.remove("aan"); knop.setAttribute("aria-pressed", "false"); if (spraakNu && spraakNu.rec === rec) spraakNu = null; veld.focus(); };
+  try { rec.start(); } catch(e){ return toast("Inspreken lukt niet"); }
+  spraakNu = { rec, knop }; knop.classList.add("aan"); knop.setAttribute("aria-pressed", "true");
+}
+document.addEventListener("click", e => { const b = e.target.closest("[data-mic]"); if (b){ e.preventDefault(); spraakStart(b); } });
+
+/* ---------- Uit mijn hoofd: privé notities per gezinslid ---------- */
+function umhLijst(){ const me = ik(); return S.lijsten.find(l => l.naam === UMH_NAAM && l.prive && me && l.eigenaar === me.id); }
+async function umhZorgLijst(){
+  let l = umhLijst(); if (l) return l;
+  const id = await db.bewaarLijst({ naam: UMH_NAAM, soort: "lijst", prive: true, vast: false, eigenaar: ik().id });
+  await herlaadGezin(); return S.lijsten.find(x => x.id === id) || umhLijst();
+}
+function umhKaart(kaart){
+  const l = umhLijst(), items = l ? l.items.filter(i => !i.klaar) : [];
+  const naar = (k, t) => `<button class="chip" data-umhnaar="${k}">${t}</button>`;
+  return kaart(`Uit mijn hoofd${items.length ? ` <span class="muted" style="font-weight:400">(${items.length})</span>` : ""}`, `
+    <form class="umh-form" id="umh-form"><div class="met-mic"><input class="in" id="umh-in" placeholder="Iets dat je niet wilt vergeten…" maxlength="300" autocomplete="off" aria-label="Snel noteren">${micKnop("umh-in")}</div><button class="knop" aria-label="Noteren">+</button></form>
+    ${items.length ? `<ul class="umh-lijst">${items.map(i => `<li data-umh="${i.id}"><span class="umh-tekst">${esc(i.tekst)}</span><span class="umh-acties">${naar("taak", "Taak")}${naar("boodschap", "Boodschap")}${naar("afspraak", "Afspraak")}<button class="ib" data-umhweg aria-label="Wegdoen" title="Wegdoen">🗑</button></span></li>`).join("")}</ul>`
+      : `<p class="muted" style="font-size:.86rem;margin:8px 0 0">Enkel jij ziet dit. Maak er later een taak, boodschap of afspraak van.</p>`}`);
+}
+document.addEventListener("submit", e => {
+  if (e.target.id !== "umh-form") return;
+  e.preventDefault(); spraakStop();
+  const v = $("#umh-in").value.trim(); if (!v) return $("#umh-in").focus();
+  run(async () => { const l = await umhZorgLijst(); await db.bewaarItem(l.id, { tekst: v, klaar: false, lid_id: null, deadline: null }); await herlaadGezin(); render(); const i = $("#umh-in"); if (i) i.focus(); });
+});
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-umhnaar],[data-umhweg]"); if (!b) return;
+  const l = umhLijst(), id = b.closest("[data-umh]").dataset.umh, it = l && l.items.find(x => x.id === id); if (!it) return;
+  const weg = async () => { await db.verwijderItem(l.id, id); await herlaadGezin(); };
+  if ("umhweg" in b.dataset) return run(async () => { await weg(); render(); toast("Weggedaan"); });
+  const v = leesSnel(it.tekst), vd = AG.iso(new Date());
+  if (b.dataset.umhnaar === "taak") openTaak(null, v.datum || vd, { titel: v.titel || it.tekst, naBewaren: weg });
+  else if (b.dataset.umhnaar === "afspraak") openAfspraak(null, v.datum || vd, { titel: v.titel || it.tekst, naBewaren: weg });
+  else run(async () => { for (const naam of splitsBoodschappen(it.tekst)) await db.addExtra(iso(S.pweek), { naam, afdeling: K.afdelingVoor(naam) });
+    await weg(); await herlaadWeek(); render(); toast(`Op de boodschappenlijst van ${pwLabel()}`); });
+});
+
+/* ---------- Verjaardag binnen 7 dagen: melding bovenaan Vandaag ---------- */
+function verjMelding(verj){
+  const kort = (verj || []).filter(x => x.n.dagen <= 7); if (!kort.length) return "";
+  const wanneer = d => d === 0 ? "Vandaag" : d === 1 ? "Morgen" : `Over ${d} dagen`;
+  return `<div class="verj-melding" role="status">${kort.map(({ v, n }) => `<span>🎂 ${wanneer(n.dagen)} ${n.dagen === 0 ? "is" : "is"} <b>${esc(v.naam)}</b> jarig${n.leeftijd ? ` (wordt ${n.leeftijd})` : ""}</span>`).join("")}</div>`;
+}
+</script>
+
 <script>/* Kring – ingrediëntregels lezen, eenheden normaliseren en producten voorstellen.
    Werkt in de browser (window.KringIngr) en in Node (module.exports). */
 (function (root) {
@@ -921,8 +1007,8 @@ function verwijderKnoppen(item, d) {
     : `<button type="button" class="knop gevaar links" data-wis-alles>Verwijderen</button>`) : "";
 }
 
-function openAfspraak(id, ds) {
-  const a = id ? JSON.parse(JSON.stringify(S.afspraken.find(x => x.id === id))) : { titel: "", kalender_id: (S.kalenders[0] || {}).id, hele_dag: false, datum: ds || AG.iso(new Date()), datum_tot: null, start_tijd: "19:00", eind_tijd: "20:00", plaats: "", notitie: "", deelnemers: [], herhaling: null, herinnering_min: null, uitzonderingen: [] };
+function openAfspraak(id, ds, extra) {
+  const a = id ? JSON.parse(JSON.stringify(S.afspraken.find(x => x.id === id))) : { titel: (extra && extra.titel) || "", kalender_id: (S.kalenders[0] || {}).id, hele_dag: false, datum: ds || AG.iso(new Date()), datum_tot: null, start_tijd: "19:00", eind_tijd: "20:00", plaats: "", notitie: "", deelnemers: [], herhaling: null, herinnering_min: null, uitzonderingen: [] };
   const ro = !!a.ics || !!a.google_ro;
   openPaneel(`<form id="a-form" novalidate>
     <div class="paneel-kop"><h2>${id ? (a.google_ro ? "Afspraak (uit Google)" : ro ? "Afspraak (geïmporteerd)" : "Afspraak bewerken") : "Nieuwe afspraak"}${a.google && !a.google_ro ? ' <span class="tag">↔ Google</span>' : ""}</h2><button type="button" class="ib" data-sluit aria-label="Sluiten">✕</button></div>
@@ -965,12 +1051,12 @@ function openAfspraak(id, ds) {
       plaats: p.querySelector("#a-plaats").value.trim(), herinnering_min: p.querySelector("#a-her").value ? +p.querySelector("#a-her").value : null,
       notitie: p.querySelector("#a-notitie").value.trim(), maaltijd: p.querySelector("#a-maaltijd").value || null };
     if (n.maaltijd === "niet_mee" && !n.deelnemers.length) return toast("Kies bij Wie wie niet mee-eet");
-    run(async () => { await db.bewaarAfspraak(n); await herlaadAgenda(); sluitPaneel(); render(); toast("Bewaard"); });
+    run(async () => { await db.bewaarAfspraak(n); if (extra && extra.naBewaren) await extra.naBewaren(); await herlaadAgenda(); sluitPaneel(); render(); toast("Bewaard"); });
   };
 }
 
-function openTaak(id, ds) {
-  const t0 = id ? JSON.parse(JSON.stringify(S.taken.find(x => x.id === id))) : { titel: "", deadline: ds || AG.iso(new Date()), tijd: "", lid_id: null, eigenaar_id: S.ik || null, picto: null, duur_min: null, herhaling: null, notitie: "", klaar: [] };
+function openTaak(id, ds, extra) {
+  const t0 = id ? JSON.parse(JSON.stringify(S.taken.find(x => x.id === id))) : { titel: (extra && extra.titel) || "", deadline: ds || AG.iso(new Date()), tijd: "", lid_id: null, eigenaar_id: S.ik || null, picto: null, duur_min: null, herhaling: null, notitie: "", klaar: [] };
   openPaneel(`<form id="t-form" novalidate>
     <div class="paneel-kop"><h2>${id ? "Taak bewerken" : "Nieuwe taak"}</h2><button type="button" class="ib" data-sluit aria-label="Sluiten">✕</button></div>
     <div class="stack">
@@ -1003,7 +1089,7 @@ function openTaak(id, ds) {
       eigenaar_id: p.querySelector("#t-denkt").value || null, picto: (p.querySelector('input[name="t-picto"]:checked') || {}).value || null,
       duur_min: Math.min(180, Math.max(1, Math.round(+p.querySelector("#t-duur").value))) || null };
     if (n.eigenaar_id && n.eigenaar_id === n.lid_id) n.eigenaar_id = null;
-    run(async () => { await db.bewaarTaak(n); await herlaadAgenda(); sluitPaneel(); render(); toast("Bewaard"); });
+    run(async () => { await db.bewaarTaak(n); if (extra && extra.naBewaren) await extra.naBewaren(); await herlaadAgenda(); sluitPaneel(); render(); toast("Bewaard"); });
   };
 }
 
@@ -1439,7 +1525,9 @@ function viewVandaag() {
   $("#view").innerHTML = `
     <h1 class="groet">${["Goedenacht", "Goeiemorgen", "Goeiemiddag", "Goeieavond"][Math.floor(nu.getHours() / 6)]}, ${esc(ik().naam)}</h1>
     <p class="muted" style="margin:-4px 0 14px">${DAGEN[(nu.getDay() + 6) % 7]} ${nu.getDate()} ${MAANDEN[nu.getMonth()]}</p>
+    ${verjMelding(verj)}
     <div class="vgrid">
+    ${umhKaart(kaart)}
     ${kaart("Vandaag", `<div class="ag-lijst">${[...telaat, ...items].map(x => itemRij(x, vd)).join("") || `<p class="muted">Niets gepland vandaag.</p>`}</div>`, `<button class="link" data-goto="agenda">Agenda</button>`)}
     ${r5OverlegKaart(kaart)}
     ${r5OpvolgKaart(kaart)}
@@ -1479,7 +1567,7 @@ function viewLijst1(l) {
     <div class="ag-kop"><button class="link" data-lijst="">‹ Alle lijsten</button><button class="ib" data-lijstinst="${l.id}" aria-label="Lijst instellen">⋯</button></div>
     <h1 style="font-size:1.4rem;margin-bottom:4px">${esc(l.naam)}</h1>
     <p class="muted" style="margin:0 0 12px">${l.items.filter(i => !i.klaar).length} open · ${l.prive ? "privé" : "gedeeld met iedereen"}</p>
-    <form class="extra-form lform" id="item-form"><input class="in" id="item-tekst" placeholder="${l.soort === "todo" ? "Nieuwe taak, bv. 'ramen wassen vrijdag'" : "Nieuw item"}" aria-label="Nieuw item" autocomplete="off"><button class="knop">Toevoegen</button></form>
+    <form class="extra-form lform" id="item-form"><div class="met-mic"><input class="in" id="item-tekst" placeholder="${l.soort === "todo" ? "Nieuwe taak, bv. 'ramen wassen vrijdag'" : "Nieuw item"}" aria-label="Nieuw item" autocomplete="off">${micKnop("item-tekst")}</div><button class="knop">Toevoegen</button></form>
     <div class="groep">${zicht.sort(sorteer).map(i => `<div class="item ${i.klaar ? "af" : ""}"><label style="grid-template-columns:24px 1fr">
         <input type="checkbox" data-litem="${l.id}|${i.id}" ${i.klaar ? "checked" : ""}>
         <span class="wat">${esc(i.tekst)}${(i.lid_id || i.deadline) ? `<span class="voor">${[i.lid_id && lid(i.lid_id) ? lid(i.lid_id).naam : "", i.deadline ? "tegen " + AG.dag(i.deadline).getDate() + " " + MND[AG.dag(i.deadline).getMonth()] : ""].filter(Boolean).join(" · ")}</span>` : ""}</span></label>
@@ -3186,11 +3274,15 @@ async function vsBereken(behoud){
     if (m && (m.gerecht_id || m.vrije_tekst)) vast[d.datum] = { gerecht_id: m.gerecht_id, vrije_tekst: m.vrije_tekst, redenen: ["al gepland in het weekmenu"] };
     const b = behoud && behoud.dagen.find(x => x.datum === d.datum && x.vastgezet && !x.vast);
     if (!vast[d.datum] && b) vast[d.datum] = { gerecht_id: b.gerecht_id, doos_id: b.doos_id, redenen: ["vastgezet"] };
+    const hv = behoud && behoud.dagen.find(x => x.datum === d.datum && x.handVrij);
+    if (!vast[d.datum] && hv) { d.vrij = hv.handVrij; d.handVrij = hv.handVrij; }   // zelf vrijgehouden (Restjes, Uit eten …)
   }
   const dozen = S.dv.items.map(i => ({ ...i, doos: (dvDoos(i.doos_id) || {}).label || "" }));
   const r = VS.maakVoorstel({ gerechten: S.gerechten, koppeling: S.koppeling, voorraad: S.vr.items.filter(i => !i.op_op), diepvries: dozen,
     historiek, dagen, vast, uitsluiten: (behoud && behoud.uitsluiten) || {}, inst, start, K });
-  r.dagen.forEach(d => { if (vast[d.datum] && vast[d.datum].redenen[0] === "vastgezet") d.vastgezet = true; });
+  r.dagen.forEach(d => { if (vast[d.datum] && vast[d.datum].redenen[0] === "vastgezet") d.vastgezet = true;
+    const hv = !vast[d.datum] && behoud && behoud.dagen.find(x => x.datum === d.datum && x.handVrij);
+    if (hv) { d.vrij = hv.handVrij; d.handVrij = hv.handVrij; d.gerecht_id = null; } });
   return { ...r, uitsluiten: (behoud && behoud.uitsluiten) || {}, status: "voorstel", gemaakt: new Date().toISOString() };
 }
 async function vsMaak(behoud){ const v = await vsBereken(behoud); await db.bewaarVoorstel(v); S.vs = v; return v; }
@@ -3222,14 +3314,18 @@ async function openVoorstel(){
   const kan = vsBeheerder();
   openPaneel(`
     <div class="paneel-kop"><h2>Weekvoorstel ${vsDagLabel(v.start)} – ${vsDagLabel(v.einde)}</h2><button class="ib" data-sluit aria-label="Sluiten">✕</button></div>
-    <p class="muted" style="margin-top:-6px">Warme gerechten op basis van wat in huis is en wat eerst op moet. Weekdagen: avondmaal; weekend: ${inst.weekendMoment === "middag" ? "middag" : "avond"}. Vastzetten (●) houdt een dag bij "Opnieuw".${v.status === "overgenomen" ? " <b>Al overgenomen in het weekmenu.</b>" : ""}</p>
+    <p class="muted" style="margin-top:-6px">Warme gerechten op basis van wat in huis is en wat eerst op moet. Weekdagen: avondmaal; weekend: ${inst.weekendMoment === "middag" ? "middag" : "avond"}. Vastzetten (●) houdt een dag bij "Opnieuw"; vrijhouden (⊘) voor restjes, uit eten …${v.status === "overgenomen" ? " <b>Al overgenomen in het weekmenu.</b>" : ""}</p>
     <div class="vs-dagen">${v.dagen.map(d => `<div class="vs-dag ${d.vrij ? "vrij" : ""}" data-vsdag="${d.datum}">
       <div class="vs-wanneer"><b>${VS_KORT[d.weekdag]}</b><span>${new Date(d.datum + "T12:00:00").getDate()} ${MND[new Date(d.datum + "T12:00:00").getMonth()]}</span></div>
-      <div class="vs-wat">${d.vrij ? `<b class="muted">Geen warme maaltijd thuis</b><small>${esc(d.vrij)}</small>`
+      <div class="vs-wat">${d.handVrij ? `<b><i>${esc(d.handVrij)}</i></b><small>vrijgehouden · geen boodschappen</small>`
+        : d.vrij ? `<b class="muted">Geen warme maaltijd thuis</b><small>${esc(d.vrij)}</small>`
         : `<b>${esc(vsNaam(d))}</b><small>${d.eters} ${d.eters === 1 ? "eter" : "eters"}${d.redenen.length ? " · " + d.redenen.map(esc).join(" · ") : ""}</small>`}</div>
-      <div class="vs-knoppen">${d.vrij || d.vast ? (d.vast ? `<span class="tag">gepland</span>` : "") : `
+      <div class="vs-knoppen">${d.handVrij ? `<button class="ib" data-vsterug aria-label="Toch een gerecht" title="Toch een gerecht">↺</button>`
+        : d.vrij || d.vast ? (d.vast ? `<span class="tag">gepland</span>` : "") : `
         <button class="ib ${d.vastgezet ? "aan" : ""}" data-vsvast aria-pressed="${!!d.vastgezet}" aria-label="Vastzetten" title="Vastzetten">●</button>
-        <button class="ib" data-vsander aria-label="Ander voorstel" title="Ander voorstel">↻</button>`}</div></div>`).join("")}</div>
+        <button class="ib" data-vsander aria-label="Ander voorstel" title="Ander voorstel">↻</button>
+        <button class="ib ${S.vsVrijOpen === d.datum ? "aan" : ""}" data-vsvrij aria-label="Vrijhouden" title="Vrijhouden">⊘</button>`}</div>
+      ${S.vsVrijOpen === d.datum ? `<div class="chips vs-snel">${SNELKEUZES.map(x => `<button class="chip" data-vssnel="${esc(x)}">${esc(x)}</button>`).join("")}</div>` : ""}</div>`).join("")}</div>
     <p class="muted" style="font-size:.85rem">${v.kandidaten} gerechten bekeken. Uitzonderingen komen uit de agenda (afspraak → Avondmaal).</p>
     <div class="voet"><button class="knop sec links" data-vsopnieuw>Opnieuw</button><button class="knop sec" data-sluit>Sluiten</button>
       <button class="knop" data-vsover>${v.status === "overgenomen" ? "Opnieuw overnemen" : "Overnemen in weekmenu"}</button></div>`);
@@ -3238,6 +3334,17 @@ async function openVoorstel(){
     const b = e.target.closest("button"); if (!b) return;
     const rij = b.closest("[data-vsdag]"), d = rij && S.vs.dagen.find(x => x.datum === rij.dataset.vsdag);
     if ("vsvast" in b.dataset){ d.vastgezet = !d.vastgezet; run(async () => { await db.bewaarVoorstel(S.vs); openVoorstel(); }); }
+    if ("vsvrij" in b.dataset){ S.vsVrijOpen = S.vsVrijOpen === d.datum ? null : d.datum; openVoorstel(); }
+    if (b.dataset.vssnel){ S.vsVrijOpen = null; d.vrij = d.handVrij = b.dataset.vssnel; d.gerecht_id = null; d.doos_id = null; d.vastgezet = false; d.redenen = [];
+      run(async () => { await db.bewaarVoorstel(S.vs); openVoorstel(); }); }
+    if ("vsterug" in b.dataset) run(async () => {
+      delete d.handVrij; d.vrij = null;
+      const oud = JSON.parse(JSON.stringify(S.vs));
+      oud.dagen.forEach(x => { if (x.datum !== d.datum && !x.vrij && !x.vast) x.vastgezet = true; });
+      const nieuw = await vsBereken(oud);
+      nieuw.dagen.forEach(x => { const o = S.vs.dagen.find(y => y.datum === x.datum); x.vastgezet = !!(o && o.vastgezet); if (o && x.datum !== d.datum && !x.vrij && !x.vast) x.redenen = o.redenen; });
+      S.vs = { ...nieuw, uitsluiten: S.vs.uitsluiten || {} }; await db.bewaarVoorstel(S.vs); openVoorstel();
+    });
     if ("vsander" in b.dataset) run(async () => {
       const u = S.vs.uitsluiten || (S.vs.uitsluiten = {});
       (u[d.datum] = u[d.datum] || []).push(d.gerecht_id);
@@ -3250,7 +3357,10 @@ async function openVoorstel(){
     if ("vsopnieuw" in b.dataset) run(async () => { await vsMaak({ ...S.vs, uitsluiten: {} }); openVoorstel(); toast("Nieuw voorstel"); });
     if ("vsover" in b.dataset) run(async () => {
       let n = 0;
-      for (const x of S.vs.dagen) if (!x.vrij && !x.vast && x.gerecht_id) { await db.setSlot(x.datum, x.moment, { gerecht_id: x.gerecht_id, porties: x.porties || null }); n++; }
+      for (const x of S.vs.dagen) {
+        if (x.handVrij && !x.vast) await db.setSlot(x.datum, x.moment, { vrije_tekst: x.handVrij, porties: null });
+        else if (!x.vrij && !x.vast && x.gerecht_id) { await db.setSlot(x.datum, x.moment, { gerecht_id: x.gerecht_id, porties: x.porties || null }); n++; }
+      }
       S.vs.status = "overgenomen"; await db.bewaarVoorstel(S.vs); S.pweek = datumVan(S.vs.start);
       await db.log(`nam het weekvoorstel ${vsDagLabel(S.vs.start)} – ${vsDagLabel(S.vs.einde)} over (${n} gerechten)`);
       await Promise.all([herlaadWeek(), herlaadGezin()]); sluitPaneel(); render(); toast(`${n} gerechten in het weekmenu gezet`);
@@ -4503,7 +4613,7 @@ function viewLijst(){
     ${voorraad.length ? `<details class="groep voorraad"><summary><h3><span>Voorraadkast nakijken (${voorraad.length})</span></h3></summary>${zichtbaar(voorraad).sort((x, y) => x.naam.localeCompare(y.naam, "nl")).map(itemHtml).join("")}</details>` : ""}
     <div class="groep"><h3><span>Iets extra toevoegen</span></h3>
       <form class="extra-form" id="extra-form">
-        <input class="in" id="x-naam" placeholder="bv. wc-papier, 6 flessen water" aria-label="Wat" required>
+        <div class="met-mic"><input class="in" id="x-naam" placeholder="bv. wc-papier, 6 flessen water" aria-label="Wat" required autocomplete="off">${micKnop("x-naam")}</div>
         <select class="in" id="x-afd" aria-label="Afdeling">${AFD.map(a => `<option ${a === "Andere" ? "selected" : ""}>${a}</option>`).join("")}</select>
         <button class="knop">Toevoegen</button>
       </form></div>`;
@@ -4560,6 +4670,7 @@ function openKiezer(ds, mo){
     <div class="stack">
       <div class="veld"><label>Aantal personen</label>
         <div class="stepper"><button class="ib" data-p="-1" aria-label="Minder">−</button><output id="k-p">${porties}</output><button class="ib" data-p="1" aria-label="Meer">+</button></div></div>
+      <div class="chips snelkeuze" aria-label="Snelkeuze zonder recept">${SNELKEUZES.map(x => `<button class="chip" data-snelvrij="${esc(x)}">${esc(x)}</button>`).join("")}</div>
       <input class="in" id="k-zoek" type="search" placeholder="Zoek gerecht" aria-label="Zoek gerecht" autofocus>
     </div>
     <div class="keuzes" id="k-lijst"></div>
@@ -4576,6 +4687,7 @@ function openKiezer(ds, mo){
     else if ("vrij" in t.dataset){ const v = $("#k-vrij").value.trim(); if (!v) return toast("Vul eerst een tekst in");
       run(async () => { await db.setSlot(ds, mo, {vrije_tekst: v, porties}); await herlaadWeek(); sluitPaneel(); render(); }); }
     else if ("leeg" in t.dataset) run(async () => { await db.clearSlot(ds, mo); await herlaadWeek(); sluitPaneel(); render(); toast("Leeggemaakt"); });
+    else if (t.dataset.snelvrij) run(async () => { await db.setSlot(ds, mo, {vrije_tekst: t.dataset.snelvrij, porties}); await herlaadWeek(); sluitPaneel(); render(); toast(t.dataset.snelvrij); });
   };
 }
 
@@ -4893,8 +5005,10 @@ document.addEventListener("submit", e => {
     const p = leesSnel(v); run(async () => { await db.bewaarItem(l.id, {tekst: p.datum ? p.titel : v, klaar: false, lid_id: null, deadline: p.datum}); await db.log(`zette '${p.datum ? p.titel : v}' op ${l.naam}`); await herlaadGezin(); render(); }); return; }
   if (e.target.id !== "extra-form") return;
   e.preventDefault();
-  const naam = $("#x-naam").value.trim(); if (!naam) return;
-  run(async () => { await db.addExtra(iso(S.pweek), {naam, afdeling: $("#x-afd").value}); await herlaadWeek(); render(); $("#x-naam").focus(); });
+  const delen = splitsBoodschappen($("#x-naam").value); if (!delen.length) return;
+  const afd = $("#x-afd").value;
+  run(async () => { for (const naam of delen) await db.addExtra(iso(S.pweek), {naam, afdeling: afd === "Andere" ? K.afdelingVoor(naam) : afd});
+    await herlaadWeek(); render(); if (delen.length > 1) toast(`${delen.length} items toegevoegd`); $("#x-naam").focus(); });
 });
 // Slepen: recept uit zijpaneel → dag, of dag → andere dag (verplaatsen)
 document.addEventListener("dragstart", e => {
