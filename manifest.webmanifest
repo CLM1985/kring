@@ -47,5 +47,20 @@
         }
       ]
     }
-  }
+  },
+  "shortcuts": [
+    {
+      "name": "Inspreken in Uit mijn hoofd",
+      "short_name": "Inspreken",
+      "description": "Meteen een notitie inspreken",
+      "url": "./?actie=inspreken#vandaag",
+      "icons": [
+        {
+          "src": "app/snel-inspreken-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
+  ]
 }

@@ -1,6 +1,6 @@
 // Kring – service worker. Altijd eerst het netwerk (nieuwste versie), cache enkel als reserve zonder verbinding.
 // Supabase en andere domeinen worden nooit aangeraakt of gecachet.
-const CACHE = "kring-v2";
+const CACHE = "kring-v3";
 const GEDEELD = "kring-gedeeld"; // tijdelijke plek voor een gedeeld kasticket // verhogen bij grote wijzigingen om oude caches op te ruimen
 
 self.addEventListener("install", () => self.skipWaiting());
