@@ -396,14 +396,17 @@ function spraakStop(){ if (spraakNu){ try { spraakNu.rec.stop(); } catch(e){} } 
 function spraakStart(knop){
   const veld = document.getElementById(knop.dataset.mic); if (!veld) return;
   if (spraakNu){ const zelfde = spraakNu.knop === knop; spraakStop(); if (zelfde) return; }
-  const rec = new SPRAAK(); rec.lang = "nl-BE"; rec.interimResults = true; rec.continuous = true; rec.maxAlternatives = 1;
+  const rec = new SPRAAK(); rec.lang = "nl-BE"; rec.interimResults = true; rec.maxAlternatives = 1;
+  rec.continuous = !/Android/i.test(navigator.userAgent);   // Android: één zin, stopt vanzelf (continuous is daar onbetrouwbaar)
   const basis = veld.value.trim() ? veld.value.trim() + " " : "";
-  let vast = "";
+  let vast = "", fout = false, gehoord = false;
+  rec.onstart = () => toast("Luisteren… spreek nu");
   rec.onresult = e => { let tijdelijk = ""; for (let k = e.resultIndex; k < e.results.length; k++){ const r = e.results[k]; if (r.isFinal) vast += r[0].transcript; else tijdelijk += r[0].transcript; }
-    veld.value = (basis + vast + tijdelijk).replace(/\s+/g, " ").trimStart(); veld.dispatchEvent(new Event("input", { bubbles: true })); };
-  rec.onerror = e => { const m = { "not-allowed": "Geef Kring toegang tot de microfoon", "service-not-allowed": "Inspreken is hier niet beschikbaar", "no-speech": "Niets gehoord", "network": "Inspreken heeft internet nodig" }[e.error];
-    if (m) toast(m); };
-  rec.onend = () => { knop.classList.remove("aan"); knop.setAttribute("aria-pressed", "false"); if (spraakNu && spraakNu.rec === rec) spraakNu = null; veld.focus(); };
+    gehoord = true; veld.value = (basis + vast + tijdelijk).replace(/\s+/g, " ").trimStart(); veld.dispatchEvent(new Event("input", { bubbles: true })); };
+  rec.onerror = e => { const m = { "not-allowed": "Geef Kring toegang tot de microfoon", "service-not-allowed": "Inspreken is hier niet beschikbaar", "no-speech": "Niets gehoord", "network": "Inspreken heeft internet nodig", "audio-capture": "Geen microfoon gevonden of hij is in gebruik", "language-not-supported": "Nederlands wordt hier niet ondersteund" }[e.error];
+    fout = true; if (e.error !== "aborted") toast(m || `Inspreken lukt niet (${e.error})`); };
+  rec.onend = () => { if (!gehoord && !fout) toast("Niets gehoord. Tik op 🎤 en spreek meteen");
+    knop.classList.remove("aan"); knop.setAttribute("aria-pressed", "false"); if (spraakNu && spraakNu.rec === rec) spraakNu = null; veld.focus(); };
   try { rec.start(); } catch(e){ return toast("Inspreken lukt niet"); }
   spraakNu = { rec, knop }; knop.classList.add("aan"); knop.setAttribute("aria-pressed", "true");
 }
@@ -1620,9 +1623,9 @@ function leesSnel(tekst) {
 function openSnel() {
   const todo = S.lijsten.filter(l => l.soort === "todo");
   openPaneel(`<form id="s-form"><div class="paneel-kop"><h2>Snel toevoegen</h2><button type="button" class="ib" data-sluit aria-label="Sluiten">✕</button></div>
-    <input class="in" id="s-tekst" placeholder="bv. morgen 19u kapper · melk · vrijdag ramen wassen" autofocus autocomplete="off" aria-label="Wat wil je toevoegen">
+    <div class="met-mic"><input class="in" id="s-tekst" placeholder="bv. morgen 19u kapper · melk · vrijdag ramen wassen" autofocus autocomplete="off" aria-label="Wat wil je toevoegen">${micKnop("s-tekst")}</div>
     <p class="muted" id="s-uitleg" style="font-size:.88rem;margin:8px 0">Typ iets; de app stelt voor waar het hoort.</p>
-    <div class="chips" id="s-soort">${[["afspraak", "Afspraak"], ["taak", "Taak"], ["todo", "To-do"], ["boodschap", "Boodschap"]].map(([k, l]) => `<button type="button" class="chip" data-ssoort="${k}" aria-pressed="false">${l}</button>`).join("")}</div>
+    <div class="chips" id="s-soort">${[["notitie", "Uit mijn hoofd"], ["afspraak", "Afspraak"], ["taak", "Taak"], ["todo", "To-do"], ["boodschap", "Boodschap"]].map(([k, l]) => `<button type="button" class="chip" data-ssoort="${k}" aria-pressed="false">${l}</button>`).join("")}</div>
     <div class="voet"><button type="button" class="knop sec" data-sluit>Annuleren</button><button class="knop">Toevoegen</button></div></form>`);
   const p = $("#paneel"); let soort = null, gekozen = false;
   const toon = () => {
@@ -1632,13 +1635,14 @@ function openSnel() {
     const wanneer = v.datum ? `${AG.dag(v.datum).getDate()} ${MND[AG.dag(v.datum).getMonth()]}${v.tijd ? " om " + v.tijd : ""}` : v.tijd ? "vandaag om " + v.tijd : "";
     p.querySelector("#s-uitleg").textContent = !v.titel ? "Typ iets; de app stelt voor waar het hoort." :
       ({ afspraak: `Afspraak "${v.titel}"${wanneer ? " op " + wanneer : " vandaag"} in agenda Gezin`, taak: `Taak "${v.titel}"${wanneer ? " tegen " + wanneer : " voor vandaag"}`,
-         todo: `To-do "${v.titel}" op ${todo[0] ? todo[0].naam : "een nieuwe to-do-lijst"}`, boodschap: `"${v.titel}" op de boodschappenlijst van ${pwLabel()}` })[soort];
+         todo: `To-do "${v.titel}" op ${todo[0] ? todo[0].naam : "een nieuwe to-do-lijst"}`, notitie: `Notitie in "Uit mijn hoofd" (enkel jij ziet ze)`, boodschap: `"${v.titel}" op de boodschappenlijst van ${pwLabel()}` })[soort];
   };
   p.oninput = toon;
   p.onclick = e => { const t = e.target.closest("[data-ssoort]"); if (t) { soort = t.dataset.ssoort; gekozen = true; toon(); } };
   p.onsubmit = e => {
-    e.preventDefault(); const v = leesSnel(p.querySelector("#s-tekst").value); if (!v.titel) return;
+    e.preventDefault(); spraakStop(); const ruw = p.querySelector("#s-tekst").value.trim(), v = leesSnel(ruw); if (!v.titel) return;
     const vd = AG.iso(new Date());
+    if (soort === "notitie") return run(async () => { const l = await umhZorgLijst(); await db.bewaarItem(l.id, { tekst: ruw, klaar: false, lid_id: null, deadline: null }); await herlaadGezin(); sluitPaneel(); render(); toast("Genoteerd in Uit mijn hoofd"); });
     run(async () => {
       if (soort === "afspraak") await db.bewaarAfspraak({ titel: v.titel, kalender_id: S.kalenders[0].id, hele_dag: !v.tijd, datum: v.datum || vd, datum_tot: null, start_tijd: v.tijd, eind_tijd: null, plaats: "", notitie: "", deelnemers: [], herhaling: null, uitzonderingen: [], herinnering_min: null });
       else if (soort === "taak") await db.bewaarTaak({ titel: v.titel, deadline: v.datum || vd, tijd: v.tijd, lid_id: S.ik || null, herhaling: null, notitie: "", klaar: [] });
