@@ -888,6 +888,150 @@ function verjMelding(verj){
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.KringAgenda = api;
 })(typeof window !== "undefined" ? window : globalThis);
 </script>
+<script>/* Kring – afvalkalender (Recycle!/Fost Plus): agenda "Afval", afvalpaneel, kaart op Vandaag.
+   Data komt uit gezin.afval_agenda (nachtelijke sync). Wie buitenzet en afvinken staan in eigen tabellen. */
+"use strict";
+const AF_UUR_KLAAR = 9;   // op de ophaaldag springt de kaart na dit uur door naar de volgende ophaling
+
+/* Demo: vast ritme vanaf vandaag (fictief) */
+function afDemoReeks() {
+  const v = AG.iso(new Date()), uit = [], fr = [
+    { id: "d-rest", naam: "Restafval", kleur: "#767676", wd: 2, elk: 1 },
+    { id: "d-pmd", naam: "PMD", kleur: "#66C3FA", wd: 1, elk: 2 },
+    { id: "d-pap", naam: "Papier-karton", kleur: "#FEC91B", wd: 4, elk: 4 },
+    { id: "d-gft", naam: "GFT", kleur: "#7EBF00", wd: 5, elk: 1 }];
+  const ma = AG.plus(v, 1 - AG.weekdag(v));
+  for (let w = -1; w < 12; w++) for (const f of fr) if (((w % f.elk) + f.elk) % f.elk === 0) {
+    const d = AG.plus(ma, w * 7 + f.wd - 1);
+    uit.push({ fostplus_id: `${f.id}-${d}`, datum: d, fractie_id: f.id, fractie: f.naam, kleur: f.kleur, reden_wijziging: null, vervangt_datum: null });
+  }
+  return uit.sort((a, b) => a.datum.localeCompare(b.datum));
+}
+window.AF_LOCAL = {
+  async loadAfval() {
+    const a = this.d.afval = this.d.afval || { verantw: {}, status: {} };
+    const items = afDemoReeks().map(o => { const s = a.status[o.fostplus_id] || {};
+      return { ...o, standaard_lid: a.verantw[o.fractie_id] || null, ander_lid: s.lid_id || null, lid_id: s.lid_id || a.verantw[o.fractie_id] || null, buitengezet_op: s.op || null, buitengezet_door: s.door || null }; });
+    return { items, adres: { straat: "Voorbeeldstraat", huisnummer: "1", laatst_opgehaald: new Date().toISOString(), laatste_status: "ok: " + items.length } };
+  },
+  async zetAfvalVerantwoordelijke(fr, lidId) { const a = this.d.afval; if (lidId) a.verantw[fr] = lidId; else delete a.verantw[fr]; this.save(); },
+  async zetAfvalLid(id, lidId) { const a = this.d.afval, s = a.status[id] = a.status[id] || {}; s.lid_id = lidId || null; this.save(); },
+  async vinkAfval(id, val) { const a = this.d.afval, s = a.status[id] = a.status[id] || {}; s.op = val ? new Date().toISOString() : null; s.door = val ? S.ik : null; this.save(); }
+};
+window.AF_SUPA = {
+  async loadAfval() {
+    const [o, a] = await Promise.all([
+      this.g.from("afval_agenda").select("*").eq("huishouden_id", this.h).gte("datum", AG.plus(AG.iso(new Date()), -30)).order("datum"),
+      this.g.from("afval_adres").select("straat, huisnummer, laatst_opgehaald, laatste_status").eq("huishouden_id", this.h).maybeSingle()]);
+    if (o.error) { console.warn("afval:", o.error.message); return { items: [], adres: null }; }   // migratie nog niet uitgevoerd
+    return { items: o.data || [], adres: (a && a.data) || null };
+  },
+  async zetAfvalVerantwoordelijke(fr, lidId) { this.ok(await this.g.rpc("afval_zet_verantwoordelijke", { p_huishouden: this.h, p_fractie_id: fr, p_lid: lidId || null })); },
+  async zetAfvalLid(id, lidId) { this.ok(await this.g.rpc("afval_zet_lid", { p_huishouden: this.h, p_fostplus_id: id, p_lid: lidId || null })); },
+  async vinkAfval(id, val) { this.ok(await this.g.rpc("afval_vink", { p_huishouden: this.h, p_fostplus_id: id, p_klaar: !!val })); }
+};
+async function herlaadAfval() { try { S.afval = await db.loadAfval(); } catch (e) { console.error(e); S.afval = { items: [], adres: null }; } }
+
+const afItem = id => ((S.afval || {}).items || []).find(x => x.fostplus_id === id);
+const afNaam = id => { const l = id && lid(id); return l ? (l.id === S.ik ? "jij" : l.naam) : ""; };
+const afDatum = d => `${KORT[AG.weekdag(d) - 1]} ${AG.dag(d).getDate()} ${MND[AG.dag(d).getMonth()]}`;
+/* Fracties (uniek, in volgorde van eerste ophaling) */
+function afFracties() {
+  const m = new Map(); for (const o of (S.afval || {}).items || []) if (!m.has(o.fractie_id)) m.set(o.fractie_id, o);
+  return [...m.values()].sort((a, b) => a.fractie.localeCompare(b.fractie, "nl"));
+}
+/* Agenda-items (voor agendaItems) */
+function afvalAgendaItems(van, tot, voeg) {
+  for (const o of (S.afval || {}).items || []) if (o.datum >= van && o.datum <= tot)
+    voeg(o.datum, { soort: "afval", id: o.fostplus_id, titel: o.fractie, heleDag: true, kleur: o.kleur || "#767676",
+      wie: [lid(o.lid_id)].filter(Boolean), klaar: !!o.buitengezet_op, reden: o.reden_wijziging ? o.reden_wijziging + (o.vervangt_datum ? " i.p.v. " + afDatum(o.vervangt_datum) : "") : "" });
+}
+/* Volgende ophaaldag: vandaag tot 9 u, daarna de eerstvolgende */
+function afVolgende() {
+  const nu = new Date(), vd = AG.iso(nu), items = (S.afval || {}).items || [];
+  const d = (items.find(o => o.datum > vd || (o.datum === vd && nu.getHours() < AF_UUR_KLAAR)) || {}).datum;
+  return d ? { datum: d, items: items.filter(o => o.datum === d) } : null;
+}
+function afBuitenTekst(d) {
+  const vd = AG.iso(new Date()), n = AG.verschil ? AG.verschil(vd, d) : Math.round((AG.dag(d) - AG.dag(vd)) / 864e5);
+  if (n <= 0) return "Vandaag opgehaald";
+  if (n === 1) return "Vanavond buiten zetten";
+  return `${DAGEN[AG.weekdag(AG.plus(d, -1)) - 1]}avond buiten zetten`;
+}
+function afRij(o, metDatum) {
+  const wie = afNaam(o.lid_id);
+  return `<div class="ag-item heledag${o.buitengezet_op ? " klaar" : ""}" style="--k:${o.kleur || "#767676"}">
+    <input type="checkbox" class="ag-vink" data-afval="${esc(o.fostplus_id)}" ${o.buitengezet_op ? "checked" : ""} aria-label="${esc(o.fractie)} buitengezet">
+    <button class="ag-knop" data-afvalitem="${esc(o.fostplus_id)}">${metDatum ? `<span class="ag-tijd">${afDatum(o.datum)}</span>` : ""}<span class="ag-titel">${esc(o.fractie)}</span>
+      <span class="ag-meta">${[wie || "nog niemand", o.reden_wijziging ? o.reden_wijziging + (o.vervangt_datum ? " i.p.v. " + afDatum(o.vervangt_datum) : "") : "", o.buitengezet_op && o.buitengezet_door ? "buitengezet door " + afNaam(o.buitengezet_door) : ""].filter(Boolean).map(esc).join(" · ")}</span></button></div>`;
+}
+
+/* ---------- Kaart op Vandaag ---------- */
+function afVandaagKaart(kaart) {
+  if (!S.afval || !S.afval.items.length) return "";
+  const v = afVolgende(); if (!v) return "";
+  const wk = AG.plus(v.datum, 6), rest = S.afval.items.filter(o => o.datum > v.datum && o.datum <= wk);
+  const perDag = [...new Set(rest.map(o => o.datum))].map(d => `${KORT[AG.weekdag(d) - 1]} ${rest.filter(o => o.datum === d).map(o => o.fractie.split(" (")[0].toLowerCase()).join(" + ")}`);
+  return kaart(afBuitenTekst(v.datum), `<p class="muted" style="margin:-4px 0 8px">Ophaling ${afDatum(v.datum)}</p>
+    <div class="ag-lijst">${v.items.map(o => afRij(o)).join("")}</div>
+    ${perDag.length ? `<p class="muted" style="margin:8px 0 0;font-size:.85rem">Daarna: ${esc(perDag.join(" · "))}</p>` : ""}`,
+    `<button class="link" data-afval>Afval</button>`);
+}
+
+/* ---------- Afvalpaneel ---------- */
+function openAfval() {
+  const vd = AG.iso(new Date()), items = ((S.afval || {}).items || []).filter(o => o.datum >= vd), a = (S.afval || {}).adres;
+  const weken = {}; for (const o of items) { const ma = AG.plus(o.datum, 1 - AG.weekdag(o.datum)); (weken[ma] = weken[ma] || []).push(o); }
+  const verw = {}; for (const o of (S.afval || {}).items || []) if (o.standaard_lid) verw[o.fractie_id] = o.standaard_lid;
+  const oud = a && a.laatst_opgehaald && (Date.now() - new Date(a.laatst_opgehaald)) > 2 * 864e5;
+  const fout = a && a.laatste_status && a.laatste_status.startsWith("fout");
+  const status = !a ? `<p class="muted">Nog geen adres ingesteld.</p>`
+    : `<p class="${fout || oud ? "neg-tekst" : "muted"}" style="font-size:.85rem;margin:0">${esc(a.straat)} ${esc(a.huisnummer)} · ${fout ? "ophalen mislukt: " + esc(a.laatste_status.slice(5).trim()) : oud ? "niet bijgewerkt sinds " + tijdGeleden(a.laatst_opgehaald) : "bijgewerkt " + tijdGeleden(a.laatst_opgehaald)}</p>`;
+  const huidigeWeek = AG.plus(vd, 1 - AG.weekdag(vd));
+  openPaneel(`<div class="paneel-kop"><h2>Afval</h2><button class="ib" data-sluit aria-label="Sluiten">✕</button></div>
+    ${status}
+    ${Object.keys(weken).sort().map(ma => `<div class="groep"><h3><span>${ma === huidigeWeek ? "Deze week" : ma === AG.plus(huidigeWeek, 7) ? "Volgende week" : "Week van " + AG.dag(ma).getDate() + " " + MND[AG.dag(ma).getMonth()]}</span></h3>
+      <div class="ag-lijst">${weken[ma].map(o => afRij(o, true)).join("")}</div></div>`).join("") || `<p class="muted">Geen ophalingen in de komende weken.</p>`}
+    <div class="groep"><h3><span>Vaste verantwoordelijke</span></h3>
+      <p class="muted" style="margin:0 0 8px;font-size:.85rem">Wie zet deze soort standaard buiten? Per ophaling kan je iemand anders kiezen.</p>
+      ${afFracties().map(f => `<div class="veld" style="margin-bottom:8px"><label for="af-v-${esc(f.fractie_id)}"><span class="dot" style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${f.kleur};margin-right:6px"></span>${esc(f.fractie)}</label>
+        <select class="in" id="af-v-${esc(f.fractie_id)}" data-afverantw="${esc(f.fractie_id)}"><option value="">Niemand</option>${S.leden.filter(l => l.rol !== "kind").map(l => `<option value="${l.id}" ${verw[f.fractie_id] === l.id ? "selected" : ""}>${esc(l.naam)}</option>`).join("")}</select></div>`).join("")}
+    </div>`);
+  const p = $("#paneel");
+  p.onchange = e => {
+    const t = e.target;
+    if (t.dataset.afval) return afVink(t);
+    if (t.dataset.afverantw) run(async () => { await db.zetAfvalVerantwoordelijke(t.dataset.afverantw, t.value || null); await herlaadAfval(); openAfval(); render(); toast("Bewaard"); });
+  };
+  p.onclick = e => { const b = e.target.closest("button"); if (b && b.dataset.afvalitem) openAfvalItem(b.dataset.afvalitem); };
+}
+function openAfvalItem(id) {
+  const o = afItem(id); if (!o) return;
+  openPaneel(`<div class="paneel-kop"><h2>${esc(o.fractie)}</h2><button class="ib" data-sluit aria-label="Sluiten">✕</button></div>
+    <p class="muted" style="margin:0 0 12px">${DAGEN[AG.weekdag(o.datum) - 1]} ${AG.dag(o.datum).getDate()} ${MAANDEN[AG.dag(o.datum).getMonth()]}${o.reden_wijziging ? " · " + esc(o.reden_wijziging) + (o.vervangt_datum ? " (i.p.v. " + afDatum(o.vervangt_datum) + ")" : "") : ""}</p>
+    <div class="stack">
+    <div class="veld"><label for="af-wie">Wie zet buiten</label><select class="in" id="af-wie"><option value="">${o.standaard_lid ? "Vaste verantwoordelijke (" + esc(lid(o.standaard_lid) ? lid(o.standaard_lid).naam : "?") + ")" : "Niemand (geen vaste verantwoordelijke)"}</option>
+      ${S.leden.filter(l => l.rol !== "kind").map(l => `<option value="${l.id}" ${o.ander_lid === l.id ? "selected" : ""}>${esc(l.naam)}</option>`).join("")}</select></div>
+    <label class="toggle"><input type="checkbox" id="af-klaar" ${o.buitengezet_op ? "checked" : ""}> Buitengezet${o.buitengezet_op && o.buitengezet_door ? ` <span class="muted">(${esc(afNaam(o.buitengezet_door))})</span>` : ""}</label>
+    </div>
+    <div class="voet"><button class="knop sec" data-afval>Alle ophalingen</button><button class="knop" data-sluit>Klaar</button></div>`);
+  const p = $("#paneel");
+  p.onchange = e => {
+    if (e.target.id === "af-wie") run(async () => { await db.zetAfvalLid(id, e.target.value || null); await herlaadAfval(); render(); toast("Bewaard"); });
+    if (e.target.id === "af-klaar") run(async () => { await db.vinkAfval(id, e.target.checked); await herlaadAfval(); render(); });
+  };
+  p.onclick = e => { const b = e.target.closest("button"); if (b && "afval" in b.dataset) openAfval(); };
+}
+function afVink(cb) {
+  const id = cb.dataset.afval, val = cb.checked, it = cb.closest(".ag-item"); if (it) it.classList.toggle("klaar", val);
+  run(async () => { await db.vinkAfval(id, val); await herlaadAfval(); if ($("#sheet").hidden) render(); else if ($("#paneel .paneel-kop h2") && $("#paneel .paneel-kop h2").textContent === "Afval") openAfval(); });
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest("button[data-afvalitem],button[data-afval]"); if (!b || b.closest("#paneel")) return;
+  if (b.dataset.afvalitem) openAfvalItem(b.dataset.afvalitem); else openAfval();
+});
+document.addEventListener("change", e => { const t = e.target; if (t.dataset && t.dataset.afval && !t.closest("#paneel")) afVink(t); });
+</script>
 <script>/* Kring – agenda-scherm (R2). Gebruikt de globale hulpfuncties van index.html ($, esc, S, db, run, openPaneel …).
    Wordt vóór het hoofdscript geladen; functies worden pas aangeroepen na de start. */
 "use strict";
@@ -898,7 +1042,8 @@ const SYS = [   // ingebouwde kalenders (niet bewaard, enkel aan/uit)
   { id: "sys-verj", naam: "Verjaardagen", kleur: "#c48a1f" },
   { id: "sys-maaltijd", naam: "Maaltijden", kleur: "#24493f" },
   { id: "sys-feest", naam: "Feestdagen BE", kleur: "#b05a2a" },
-  { id: "sys-school", naam: "Schoolvakanties VL", kleur: "#8a4fa3" }
+  { id: "sys-school", naam: "Schoolvakanties VL", kleur: "#8a4fa3" },
+  { id: "sys-afval", naam: "Afval", kleur: "#767676" }
 ];
 const HERH = [["", "Niet"], ["dag", "Elke dag"], ["week", "Elke week"], ["week2", "Om de 2 weken"], ["maand", "Elke maand"], ["jaar", "Elk jaar"]];
 const HERINNER = [["", "Geen"], ["15", "15 min vooraf"], ["60", "1 uur vooraf"], ["1440", "1 dag vooraf"]];
@@ -941,17 +1086,19 @@ function agendaItems(van, tot) {
       const g = gerecht(m.gerecht_id); const t = g ? g.naam : m.vrije_tekst;
       if (t) voeg(m.datum, { soort: "maaltijd", titel: t, heleDag: true, kleur: kalender("sys-maaltijd").kleur });
     }
-  const volg = { school: 0, feest: 1, verjaardag: 2, afspraak: 3, taak: 4, lijstitem: 5, maaltijd: 9 };
+  if (zichtbaar("sys-afval")) afvalAgendaItems(van, tot, voeg);
+  const volg = { school: 0, feest: 1, verjaardag: 2, afval: 2, afspraak: 3, taak: 4, lijstitem: 5, maaltijd: 9 };
   for (const d in per) per[d].sort((a, b) => (a.heleDag === b.heleDag ? 0 : a.heleDag ? -1 : 1) || (a.tijd || "").localeCompare(b.tijd || "") || volg[a.soort] - volg[b.soort]);
   return per;
 }
 
 function itemRij(it, dagStr, kort) {
-  const meta = [it.eind ? `tot ${it.eind}` : "", it.lijst ? "op " + it.lijst : "", it.plaats, it.wie && it.wie.length ? it.wie.map(w => w.naam).join(", ") : "", it.denkt ? "denkt: " + it.denkt.naam : "", it.herh ? "↻" : ""].filter(Boolean).join(" · ");
-  const klik = it.soort === "afspraak" || it.soort === "taak" || it.soort === "verjaardag" ? `data-item="${it.soort}|${it.id}|${it.voorkomen || dagStr}"` : it.soort === "lijstitem" ? `data-litembewerk="${it.id}"` : "";
+  const meta = [it.eind ? `tot ${it.eind}` : "", it.lijst ? "op " + it.lijst : "", it.reden || "", it.plaats, it.wie && it.wie.length ? it.wie.map(w => w.naam).join(", ") : "", it.denkt ? "denkt: " + it.denkt.naam : "", it.herh ? "↻" : ""].filter(Boolean).join(" · ");
+  const klik = it.soort === "afspraak" || it.soort === "taak" || it.soort === "verjaardag" ? `data-item="${it.soort}|${it.id}|${it.voorkomen || dagStr}"` : it.soort === "lijstitem" ? `data-litembewerk="${it.id}"` : it.soort === "afval" ? `data-afvalitem="${esc(it.id)}"` : "";
   const cls = `ag-item ag-${it.soort}${it.klaar ? " klaar" : ""}${it.heleDag ? " heledag" : ""}`;
   const vink = it.soort === "taak" ? `<input type="checkbox" class="ag-vink" data-taak="${it.id}|${it.voorkomen}" ${it.klaar ? "checked" : ""} aria-label="Taak afvinken">`
-    : it.soort === "lijstitem" ? `<input type="checkbox" class="ag-vink" data-litem="${it.id}" ${it.klaar ? "checked" : ""} aria-label="Afvinken">` : "";
+    : it.soort === "lijstitem" ? `<input type="checkbox" class="ag-vink" data-litem="${it.id}" ${it.klaar ? "checked" : ""} aria-label="Afvinken">`
+    : it.soort === "afval" ? `<input type="checkbox" class="ag-vink" data-afval="${esc(it.id)}" ${it.klaar ? "checked" : ""} aria-label="${esc(it.titel)} buitengezet">` : "";
   const label = it.soort === "maaltijd" ? `<span class="tag">avond</span> ` : it.soort === "school" || it.soort === "feest" ? "" : "";
   return `<div class="${cls}" style="--k:${it.kleur}">${vink}<button class="ag-knop" ${klik} ${klik ? "" : "disabled"}>
     ${it.tijd ? `<span class="ag-tijd">${esc(it.tijd)}</span>` : ""}<span class="ag-titel">${label}${esc(it.titel)}</span>${!kort && meta ? `<span class="ag-meta">${esc(meta)}</span>` : ""}</button></div>`;
@@ -963,7 +1110,7 @@ function viewAgenda() {
   const chips = [...S.kalenders, ...SYS].map(k => `<button class="chip ag-chip" data-kal="${k.id}" aria-pressed="${zichtbaar(k.id)}" style="--k:${k.kleur}"><span class="dot"></span>${esc(k.naam)}</button>`).join("");
   const kop = `<div class="ag-kop">
       <div class="seg" role="group" aria-label="Weergave"><button data-agview="week" aria-pressed="${S.agendaView === "week"}">Week</button><button data-agview="maand" aria-pressed="${S.agendaView === "maand"}">Maand</button></div>
-      <span class="acties" style="margin:0"><button class="knop sec" data-overleg>Eilandraad</button><button class="knop" data-nieuwitem>+ Nieuw</button></span></div>
+      <span class="acties" style="margin:0"><button class="knop sec" data-afval>Afval</button><button class="knop sec" data-overleg>Eilandraad</button><button class="knop" data-nieuwitem>+ Nieuw</button></span></div>
     <div class="chips ag-chips">${chips}</div>`;
   // Aandacht: taken te laat + verjaardagen binnen 14 dagen
   // Te laat: eenmalige taken van de voorbije 30 dagen; herhalende enkel het laatste gemiste voorkomen van de voorbije 7 dagen
@@ -1010,7 +1157,7 @@ function agendaBanner() {
 
 /* Afspraken van een dag voor het weekmenu (agenda naast het weekmenu) */
 function dagAgendaKort(ds) {
-  const it = (agendaItems(ds, ds)[ds] || []).filter(x => x.soort !== "maaltijd" && x.soort !== "school");
+  const it = (agendaItems(ds, ds)[ds] || []).filter(x => x.soort !== "maaltijd" && x.soort !== "school" && x.soort !== "afval");
   if (!it.length) return "";
   return `<div class="ag-kort">${it.slice(0, 4).map(x => `<span style="--k:${x.kleur}" class="${x.soort === "taak" && x.klaar ? "klaar" : ""}">${x.tijd ? `<b>${esc(x.tijd)}</b> ` : ""}${esc(x.titel)}</span>`).join("")}${it.length > 4 ? `<span>+${it.length - 4}</span>` : ""}</div>`;
 }
@@ -1036,8 +1183,10 @@ function agendaPaneelKlik(e) {
   const t = e.target.closest("button"); if (!t) return;
   if (t.dataset.nieuwSoort) { const [s, d] = t.dataset.nieuwSoort.split("|"); ({ afspraak: openAfspraak, taak: openTaak, verjaardag: openVerjaardag })[s](null, d); }
   else if (t.dataset.item) openItem(t.dataset.item);
+  else if (t.dataset.afvalitem) openAfvalItem(t.dataset.afvalitem);
 }
 function agendaVinkWijzig(e) {
+  if (e.target.dataset && e.target.dataset.afval) return afVink(e.target);
   const v = e.target.dataset && e.target.dataset.taak; if (!v) return;
   const [id, d] = v.split("|"), val = e.target.checked;
   e.target.closest(".ag-item").classList.toggle("klaar", val);
@@ -1125,6 +1274,7 @@ function openTaak(id, ds, extra) {
     ${herhVeld(t0.herhaling, t0.deadline)}
     <div class="rij"><div class="veld"><label for="t-wie">Wie doet het</label><select class="in" id="t-wie"><option value="">Iemand</option>${S.leden.map(l => `<option value="${l.id}" ${l.id === t0.lid_id ? "selected" : ""}>${esc(l.naam)}</option>`).join("")}</select></div>
       <div class="veld"><label for="t-denkt">Wie denkt eraan</label><select class="in" id="t-denkt"><option value="">Wie het doet</option>${S.leden.filter(l => l.rol !== "kind").map(l => `<option value="${l.id}" ${l.id === t0.eigenaar_id ? "selected" : ""}>${esc(l.naam)}</option>`).join("")}</select></div></div>
+    ${zichtVeld(t0.zichtbaar_voor)}
     <details class="t-kind" ${lid(t0.lid_id) && lid(t0.lid_id).rol === "kind" ? "open" : ""}><summary class="lbl-klein">Kindmodus: pictogram en focustijd</summary>
       <div class="picto-kies" role="radiogroup" aria-label="Pictogram">${["", ...KringR5.PICTO].map(pc => `<label class="picto"><input type="radio" name="t-picto" value="${pc}" ${(t0.picto || "") === pc ? "checked" : ""} aria-label="${pc || "automatisch"}"><span>${pc}</span></label>`).join("")}</div>
       <div class="veld" style="max-width:220px"><label for="t-duur">Focustijd (minuten)</label><input class="in" id="t-duur" type="number" min="1" max="180" step="1" value="${t0.duur_min || ""}" placeholder="5"></div></details>
@@ -1133,6 +1283,7 @@ function openTaak(id, ds, extra) {
     <div class="voet">${verwijderKnoppen(id && t0, ds || t0.deadline)}<button type="button" class="knop sec" data-sluit>Annuleren</button><button class="knop" type="submit">Bewaren</button></div></form>`);
   const p = $("#paneel"); let zeker = false;
   p.onchange = e => { if (e.target.id === "a-herh") p.querySelector("#a-dagen").hidden = !e.target.value.startsWith("week");
+    if (e.target.name === "zicht") zichtWijzig(p, e.target);
     if (e.target.id === "t-wie" && lid(e.target.value) && lid(e.target.value).rol === "kind") p.querySelector(".t-kind").open = true; };
   p.onclick = e => {
     const t = e.target.closest("button"); if (!t) return;
@@ -1143,14 +1294,38 @@ function openTaak(id, ds, extra) {
   p.onsubmit = e => {
     e.preventDefault();
     const titel = p.querySelector("#t-titel").value.trim(); if (!titel) return toast("Geef de taak een naam");
-    const n = { ...t0, titel, deadline: p.querySelector("#a-datum").value, tijd: p.querySelector("#t-tijd").value || null, herhaling: leesHerh(p),
+    const zicht = leesZicht(p); if (zicht === undefined) return;
+    const n = { ...t0, titel, zichtbaar_voor: zicht, deadline: p.querySelector("#a-datum").value, tijd: p.querySelector("#t-tijd").value || null, herhaling: leesHerh(p),
       lid_id: p.querySelector("#t-wie").value || null, notitie: p.querySelector("#t-notitie").value.trim(),
       eigenaar_id: p.querySelector("#t-denkt").value || null, picto: (p.querySelector('input[name="t-picto"]:checked') || {}).value || null,
       duur_min: Math.min(180, Math.max(1, Math.round(+p.querySelector("#t-duur").value))) || null };
     if (n.eigenaar_id && n.eigenaar_id === n.lid_id) n.eigenaar_id = null;
+    if (n.zichtbaar_voor && S.ik && ![...n.zichtbaar_voor, n.lid_id, n.eigenaar_id].includes(S.ik)) n.zichtbaar_voor = [...n.zichtbaar_voor, S.ik];   // wie bewaart, blijft de taak zien
     run(async () => { await db.bewaarTaak(n); if (extra && extra.naBewaren) await extra.naBewaren(); await herlaadAgenda(); sluitPaneel(); render(); toast("Bewaard"); });
   };
 }
+
+/* "Zichtbaar voor": iedereen of een of meer gezinsleden. Bij een nieuwe taak leeg en verplicht.
+   undefined = nog niet gekozen, null = iedereen, [ids] = enkel die leden (+ wie het doet en wie eraan denkt) */
+function zichtVeld(z) {
+  const iedereen = z === null, sel = Array.isArray(z) ? z : [];
+  return `<div class="veld" id="t-zicht"><label id="t-zicht-lbl">Zichtbaar voor</label>
+    <div class="chips" style="margin:0" role="group" aria-labelledby="t-zicht-lbl">
+      <label class="chip toggle"><input type="checkbox" name="zicht" value="*" ${iedereen ? "checked" : ""}> Iedereen</label>
+      ${S.leden.map(l => `<label class="chip toggle" style="--k:${l.kleur}"><input type="checkbox" name="zicht" value="${l.id}" ${sel.includes(l.id) ? "checked" : ""}> ${esc(l.naam)}</label>`).join("")}</div>
+    <small class="muted">Wie het doet en wie eraan denkt, zien de taak altijd.</small>
+    <p class="neg-tekst" id="t-zicht-fout" role="alert" hidden style="margin:0;font-size:.85rem">Kies voor wie deze taak zichtbaar is.</p></div>`;
+}
+function zichtWijzig(p, cb) {
+  if (cb.checked) p.querySelectorAll('input[name="zicht"]').forEach(x => { if (cb.value === "*" ? x.value !== "*" : x.value === "*") x.checked = false; });
+  p.querySelector("#t-zicht-fout").hidden = true;
+}
+function leesZicht(p) {
+  const v = [...p.querySelectorAll('input[name="zicht"]:checked')].map(x => x.value);
+  if (!v.length) { const f = p.querySelector("#t-zicht-fout"); f.hidden = false; f.scrollIntoView({ block: "nearest" }); p.querySelector('input[name="zicht"]').focus(); return undefined; }
+  return v.includes("*") ? null : v;
+}
+function zietTaak(t, me) { return !t.zichtbaar_voor || !me || t.zichtbaar_voor.includes(me) || t.lid_id === me || t.eigenaar_id === me; }
 
 function openVerjaardag(id, ds) {
   const v = id ? { ...S.verjaardagen.find(x => x.id === id) } : { naam: "", datum: ds || AG.iso(new Date()), geboortejaar: null, notitie: "" };
@@ -1629,6 +1804,31 @@ function tijdGeleden(ts) {
   const d = Math.floor(s / 86400); return d === 1 ? "gisteren" : `${d} dagen geleden`;
 }
 
+/* ---------- Wat is er nieuw? (kaart op Vandaag, laatste 7 dagen) ----------
+   Vul aan bij elke wijziging aan de app: nieuwste bovenaan, kort en in gewone taal. budget: true = niet tonen aan wie het budget niet ziet. */
+const NIEUWS = [
+  { datum: "2026-11-13", tekst: "Afval: de ophaalkalender staat in de agenda (aan of uit via 'Afval'). Op Vandaag zie je wat er buiten moet en wie het doet. Afvinken kan." },
+  { datum: "2026-11-13", tekst: "Afval: stel per soort een vaste verantwoordelijke in, of kies per ophaling iemand anders (knop 'Afval' in de agenda)." },
+  { datum: "2026-11-13", tekst: "Taken: kies voor wie een taak zichtbaar is. Bij een nieuwe taak is dat verplicht; je kan meerdere personen aanduiden." },
+  { datum: "2026-11-13", tekst: "Tieners hebben een eigen account, zonder budget." },
+  { datum: "2026-11-12", tekst: "Budget → Rapporten: uitgaven als halve donut en werkelijk tegenover budget per groep of categorie.", budget: true },
+  { datum: "2026-11-12", tekst: "Uit mijn hoofd: snel iets noteren of inspreken. Met de snelkoppeling 'Inspreken' start je meteen vanaf je gsm." },
+  { datum: "2026-11-12", tekst: "Melding bovenaan Vandaag als er binnen 7 dagen een verjaardag is." },
+  { datum: "2026-11-12", tekst: "Het weekoverleg heet voortaan Eilandraad." },
+  { datum: "2026-11-11", tekst: "Boodschappen: zelf een nieuw product toevoegen en meteen koppelen." },
+  { datum: "2026-11-11", tekst: "Weekmenu: tik op een gerecht om het recept te openen; met het kruisje haal je het weg." },
+  { datum: "2026-11-11", tekst: "Kasticket delen naar Kring vanuit een andere app (Android)." },
+  { datum: "2026-11-11", tekst: "Kring is installeerbaar als app en je meldt je aan met een code uit de mail." }
+];
+function nieuwsKaart(kaart) {
+  const grens = AG.plus(AG.iso(new Date()), -7), zb = zietBudget();
+  const n = NIEUWS.filter(x => x.datum >= grens && (zb || !x.budget));
+  if (!n.length) return "";
+  const rij = x => `<li><span>${esc(x.tekst)}</span><span class="muted" style="white-space:nowrap">${AG.dag(x.datum).getDate()} ${MND[AG.dag(x.datum).getMonth()]}</span></li>`;
+  return kaart("Wat is er nieuw?", `<ul class="vlijst">${n.slice(0, 4).map(rij).join("")}</ul>
+    ${n.length > 4 ? `<details><summary class="link" style="cursor:pointer;margin-top:6px">Nog ${n.length - 4} aanpassingen</summary><ul class="vlijst">${n.slice(4).map(rij).join("")}</ul></details>` : ""}`);
+}
+
 /* ---------- Vandaag ---------- */
 function viewVandaag() {
   const nu = new Date(), vd = AG.iso(nu);
@@ -1650,6 +1850,8 @@ function viewVandaag() {
     <div class="vgrid">
     ${umhKaart(kaart)}
     ${kaart("Vandaag", `<div class="ag-lijst">${[...telaat, ...items].map(x => itemRij(x, vd)).join("") || `<p class="muted">Niets gepland vandaag.</p>`}</div>`, `<button class="link" data-goto="agenda">Agenda</button>`)}
+    ${afVandaagKaart(kaart)}
+    ${nieuwsKaart(kaart)}
     ${r5OverlegKaart(kaart)}
     ${r5OpvolgKaart(kaart)}
     ${r5KinderenKaart(kaart)}
@@ -4353,7 +4555,7 @@ class LocalStore {
   /* --- R4 budget (testdata, elke keer opnieuw berekend) --- */
   async loadBudget(){ return KringBudget.testdata(iso(new Date())); }
   /* --- agenda --- */
-  async loadAgenda(){ const {leden, kalenders, afspraken, taken, verjaardagen} = JSON.parse(JSON.stringify(this.d)); return {leden, kalenders, afspraken, taken, verjaardagen}; }
+  async loadAgenda(){ const {leden, kalenders, afspraken, taken, verjaardagen} = JSON.parse(JSON.stringify(this.d)); return {leden, kalenders, afspraken, taken: taken.filter(t => zietTaak(t, S.ik)), verjaardagen}; }
   _bewaar(lijst, o){ const c = JSON.parse(JSON.stringify(o)); if (!c.id){ c.id = uid(); this.d[lijst].push(c); } else { const k = this.d[lijst].findIndex(x => x.id === c.id); if (k < 0) this.d[lijst].push(c); else this.d[lijst][k] = c; } this.save(); return c.id; }
   async bewaarAfspraak(a){ return this._bewaar("afspraken", a); }
   async verwijderAfspraak(id){ this.d.afspraken = this.d.afspraken.filter(x => x.id !== id); this.save(); }
@@ -4431,6 +4633,8 @@ class SupaStore {
       .on("postgres_changes", {event: "*", schema: "gezin", table: "weekmenu", filter: `huishouden_id=eq.${this.h}`}, () => herlaadWeek().then(render))
       .on("postgres_changes", {event: "*", schema: "gezin", table: "boodschappen_afgevinkt", filter: `huishouden_id=eq.${this.h}`}, () => herlaadWeek().then(render))
       .on("postgres_changes", {event: "*", schema: "gezin", table: "boodschappen_extra", filter: `huishouden_id=eq.${this.h}`}, () => herlaadWeek().then(render))
+      .on("postgres_changes", {event: "*", schema: "gezin", table: "afval_status", filter: `huishouden_id=eq.${this.h}`}, () => herlaadAfval().then(() => { if ($("#sheet").hidden) render(); }))
+      .on("postgres_changes", {event: "*", schema: "gezin", table: "afval_verantwoordelijke", filter: `huishouden_id=eq.${this.h}`}, () => herlaadAfval().then(() => { if ($("#sheet").hidden) render(); }))
       .on("postgres_changes", {event: "*", schema: "gezin", table: "diepvries_items", filter: `huishouden_id=eq.${this.h}`}, () => herlaadDiepvries().then(() => { if ($("#sheet").hidden) render(); }))
       .subscribe();
   }
@@ -4509,6 +4713,7 @@ class SupaStore {
   async schrapVoorkomen(id, d){ this.ok(await this.g.rpc("schrap_voorkomen", {p_tabel: "afspraken", p_id: id, p_datum: d})); r5GoogleLater(); }
   async bewaarTaak(t){
     const r = {huishouden_id: this.h, titel: t.titel, deadline: t.deadline, tijd: t.tijd, lid_id: t.lid_id, eigenaar_id: t.eigenaar_id || null, picto: t.picto || null, duur_min: t.duur_min || null, notitie: t.notitie || null, uitzonderingen: t.uitzonderingen || [], ...this._herh(t.herhaling)};
+    if (t.zichtbaar_voor !== undefined) r.zichtbaar_voor = t.zichtbaar_voor;   // niet meegegeven = ongewijzigd (nieuw: iedereen)
     if (t.id) this.ok(await this.g.from("taken").update(r).eq("id", t.id)); else this.ok(await this.g.from("taken").insert(r));
   }
   async verwijderTaak(id){ this.ok(await this.g.from("taken").delete().eq("id", id)); }
@@ -4566,6 +4771,8 @@ Object.assign(LocalStore.prototype, window.VS_LOCAL);
 Object.assign(SupaStore.prototype, window.VS_SUPA);
 Object.assign(LocalStore.prototype, window.R5_LOCAL);
 Object.assign(SupaStore.prototype, window.R5_SUPA);
+Object.assign(LocalStore.prototype, window.AF_LOCAL);
+Object.assign(SupaStore.prototype, window.AF_SUPA);
 
 /* ================= Toestand ================= */
 const S = { tab: "vandaag", budgetView: pref.get("budgetView", "plan"), bperiode: (pref.get("bverdeling", {}) || {}).p || "jaar", bper: (pref.get("bverdeling", {}) || {}).w || "groep", bmaand: null, bfilter: "alle", bcat: null, brek: null, bzoek: "", budget: null,
@@ -4575,7 +4782,7 @@ const S = { tab: "vandaag", budgetView: pref.get("budgetView", "plan"), bperiode
             momenten: pref.get("momenten", ["avond"]), porties: pref.get("porties", 4),
             dv: {plaatsen: [], categorieen: [], dozen: [], items: []}, dvPlaats: null, dvFilter: "alle", dvZoek: "",
             vr: {ruimtes: [], categorieen: [], items: [], tickets: [], codes: {}, bestemming: {}}, vrRuimte: "diepvries", vrZoek: "", vsInst: null, vs: null, vsStart: null, pweek: null,
-            r5: { ov: null, terug: null, km: { aan: pref.get("kindmodus", false), kind: null, info: { ouderpin: false, kinderen: [] }, pin: null }, focus: null }, google: [] };
+            afval: { items: [], adres: null }, r5: { ov: null, terug: null, km: { aan: pref.get("kindmodus", false), kind: null, info: { ouderpin: false, kinderen: [] }, pin: null }, focus: null }, google: [] };
 let db;
 
 const BL = window.KringBestel;
@@ -4592,7 +4799,7 @@ async function herlaadProducten(){ const p = await db.loadProducten(); S.product
 async function herlaadAgenda(){ const a = await db.loadAgenda(); Object.assign(S, a); if (db.mijnLid) S.ik = db.mijnLid; else if (!S.leden.some(l => l.id === S.ik)) S.ik = (S.leden[0] || {}).id || null; }
 async function herlaadGezin(){ const g = await db.loadGezin(); S.lijsten = g.lijsten; S.activiteit = g.activiteit; }
 async function herlaadBudget(){ if (!zietBudget()) { S.budget = null; S.budgetGeladen = true; return; } try { BE.status = "test"; S.budget = await db.loadBudget(); if (S.budget && !S.bmaand) S.bmaand = S.budget.huidig; } catch(e){ console.error(e); S.budget = null; } S.budgetGeladen = true; }
-async function herlaadAlles(){ S.gerechten = await db.loadGerechten(); await herlaadVoorstel(); await Promise.all([herlaadWeek(), herlaadProducten(), herlaadAgenda(), herlaadGezin(), herlaadBudget(), herlaadDiepvries(), herlaadVoorraad()]); await herlaadR5(); }
+async function herlaadAlles(){ S.gerechten = await db.loadGerechten(); await herlaadVoorstel(); await Promise.all([herlaadWeek(), herlaadProducten(), herlaadAgenda(), herlaadGezin(), herlaadBudget(), herlaadDiepvries(), herlaadVoorraad(), herlaadAfval()]); await herlaadR5(); }
 const gerecht = id => S.gerechten.find(g => g.id === id);
 const slot = (d, m) => S.menu.find(x => x.datum === d && x.moment === m);
 const product = id => id == null ? null : S.prodIdx.get(String(id));

@@ -21,7 +21,7 @@ Deno.serve(async (req) => {
   const [{ data: af }, { data: kal }, { data: tk }, { data: vj }] = await Promise.all([
     sb.from("afspraken").select("*").eq("huishouden_id", h).is("ics_uid", null),
     sb.from("kalenders").select("id,naam").eq("huishouden_id", h),
-    sb.from("taken").select("*").eq("huishouden_id", h),
+    sb.from("taken").select("*").eq("huishouden_id", h).is("zichtbaar_voor", null),   // afgeschermde taken niet naar Google/iPhone
     sb.from("verjaardagen").select("*").eq("huishouden_id", h)]);
   const kn = Object.fromEntries((kal || []).map((k) => [k.id, k.naam]));
   const r: string[] = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Kring//Gezinsagenda//NL", "X-WR-CALNAME:Kring", "X-WR-TIMEZONE:Europe/Brussels", "CALSCALE:GREGORIAN"];

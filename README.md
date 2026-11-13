@@ -16,6 +16,9 @@ Vandaag · Agenda · Eten (weekmenu, gerechten, boodschappen/bestellijst, diepvr
 | `config.js` | Supabase-URL + publishable key. Leeg = demomodus in de browser |
 | `manifest.webmanifest`, `app/*.png`, `sw.js` | Installeerbaar als app (Android en iPhone), service worker: netwerk eerst, cache als reserve |
 | `supabase/migrations/20261111_gezin_kring_basis.sql` | Volledig schema `gezin` met RLS (toegepast als migratie `gezin_kring_basis`) |
+| `supabase/migrations/20261113_gezin_afval.sql` | Afvalkalender via Recycle! (Fost Plus): adres, ophalingen, nachtelijke sync (pg_cron) |
+| `supabase/migrations/20261113_gezin_afval_toewijzing.sql` | Afval: vaste verantwoordelijke per soort, wie per ophaling, afvinken, vervangdatum, view `afval_agenda` |
+| `supabase/migrations/20261113_gezin_taken_zichtbaar.sql` | Taken: "Zichtbaar voor" (RLS), geen log en geen ICS-export van afgeschermde taken |
 | `supabase/functions/recept-import` | Recept ophalen van een receptensite (JWT verplicht) |
 | `supabase/functions/ics-ophalen` | Externe ICS-agenda ophalen (JWT verplicht) |
 | `supabase/functions/agenda-feed` | Kring-agenda als ICS-feed voor Google/iPhone (zonder JWT, geheime token) |
