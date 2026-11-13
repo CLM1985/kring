@@ -416,6 +416,12 @@ details.voorraad[open] summary h3::after{content:"verbergen"}
 
 <script src="config.js"></script>
 <script>/* Kring – snel noteren ("Uit mijn hoofd"), inspreken, snelkeuzes en verjaardagsmelding */
+/* Rol "tiener": eigen account, maar geen budget (de database weigert het ook) */
+function zietBudget(){ try { const me = S.leden.find(l => l.id === S.ik); return !me || me.rol !== "tiener"; } catch(e){ return true; } }
+document.addEventListener("change", e => {
+  const c = e.target.closest && e.target.closest("[data-budgetlid]"); if (!c) return;
+  run(async () => { await db.zetBudgettoegang(c.dataset.budgetlid, c.checked); await herlaadAgenda(); openInstellingen(); toast(c.checked ? "Budget zichtbaar" : "Budget verborgen"); });
+});
 const SNELKEUZES = ["Restjes", "Frietjes", "Takeaway", "Uit eten", "Feestje", "Soep"];
 const UMH_NAAM = "Uit mijn hoofd";
 
@@ -3740,6 +3746,7 @@ window.R5_LOCAL = {
   async loadOverleg(start) { return JSON.parse(JSON.stringify((this.d.overleggen || {})[start] || null)); },
   async bewaarOverleg(o) { this.d.overleggen = { ...(this.d.overleggen || {}), [o.start]: JSON.parse(JSON.stringify(o)) }; this.save(); },
   async kindmodusInfo() { const p = this.d.pins || {}; return { ouderpin: !!p.ouder, kinderen: Object.keys(p.kind || {}) }; },
+  async zetBudgettoegang(lidId, ziet) { const l = this.d.leden.find(x => x.id === lidId); if (l && ["lid", "tiener"].includes(l.rol || "lid")) { l.rol = ziet ? "lid" : "tiener"; this.save(); } },
   async bewaarKindprofiel(lidId, kind, avatar, pin) {
     const l = this.d.leden.find(x => x.id === lidId);
     if (kind && l.heeft_account) throw new Error("een lid met een eigen account kan geen kindprofiel zijn");
@@ -3771,6 +3778,7 @@ window.R5_SUPA = {
       afgerond: o.afgerond || null, afgerond_door: o.afgerond_door || null }, { onConflict: "huishouden_id,start" }));
   },
   async kindmodusInfo() { const { data } = await this.g.rpc("kindmodus_info", { p_huishouden: this.h }); return data || { ouderpin: false, kinderen: [] }; },
+  async zetBudgettoegang(lidId, ziet) { this.ok(await this.g.rpc("zet_budgettoegang", { p_lid: lidId, p_ziet: ziet })); },
   async bewaarKindprofiel(lidId, kind, avatar, pin) { this.ok(await this.g.rpc("bewaar_kindprofiel", { p_lid: lidId, p_kind: kind, p_avatar: avatar || null, p_pin: pin || null })); },
   async bewaarOuderpin(pin) { this.ok(await this.g.rpc("bewaar_ouderpin", { p_huishouden: this.h, p_pin: pin })); },
   async controleerPin(lidId, pin) { return this.ok(await this.g.rpc("controleer_pin", { p_huishouden: this.h, p_lid: lidId || null, p_pin: pin })); },
@@ -4128,6 +4136,11 @@ function r5InstHtml() {
       <form class="instform" id="f-ouderpin" style="grid-template-columns:1fr auto"><input class="in" id="ouderpin" inputmode="numeric" pattern="[0-9]{4,6}" maxlength="6" autocomplete="off" placeholder="Ouderpincode ${info.ouderpin ? "(ingesteld, typ om te wijzigen)" : "(4–6 cijfers, nog niet ingesteld)"}" aria-label="Ouderpincode" ${kan ? "" : "disabled"}>${kan ? `<button class="knop sec klein">Bewaren</button>` : ""}</form>
       <button class="knop" data-kmstartmodus ${info.ouderpin && kinderen.length ? "" : "disabled"}>Kindmodus starten op dit toestel</button>
       ${info.ouderpin && kinderen.length ? "" : `<p class="muted" style="margin:0;font-size:.85rem">Nodig: minstens één kindprofiel en een ouderpincode.</p>`}
+    </div>
+    <div class="lbl-klein" style="margin-top:8px">Budget zichtbaar</div>
+    <div class="stack">
+      <p class="muted" style="margin:0;font-size:.88rem">Zet uit voor bv. de kinderen met een eigen account: ze zien het tabblad Budget niet en de database geeft hun ook geen cijfers. De rest van Kring gebruiken ze gewoon.</p>
+      ${S.leden.filter(l => l.heeft_account && l.id !== S.ik && ["lid", "tiener", undefined].includes(l.rol)).map(l => `<label class="toggle"><input type="checkbox" data-budgetlid="${l.id}" ${l.rol !== "tiener" ? "checked" : ""} ${kan ? "" : "disabled"}> ${esc(l.naam)} ziet het budget</label>`).join("") || `<p class="muted" style="margin:0">Nog geen andere gezinsleden met een eigen account.</p>`}
     </div>
     <div class="lbl-klein" style="margin-top:8px">Google Agenda</div>
     <div class="stack">${r5GoogleHtml()}</div>`;
@@ -4578,7 +4591,7 @@ async function herlaadWeek(){
 async function herlaadProducten(){ const p = await db.loadProducten(); S.producten = p.producten; S.koppeling = p.koppeling; S.prodIdx = new Map(S.producten.map(x => [String(x.id), x])); }
 async function herlaadAgenda(){ const a = await db.loadAgenda(); Object.assign(S, a); if (db.mijnLid) S.ik = db.mijnLid; else if (!S.leden.some(l => l.id === S.ik)) S.ik = (S.leden[0] || {}).id || null; }
 async function herlaadGezin(){ const g = await db.loadGezin(); S.lijsten = g.lijsten; S.activiteit = g.activiteit; }
-async function herlaadBudget(){ try { BE.status = "test"; S.budget = await db.loadBudget(); if (S.budget && !S.bmaand) S.bmaand = S.budget.huidig; } catch(e){ console.error(e); S.budget = null; } S.budgetGeladen = true; }
+async function herlaadBudget(){ if (!zietBudget()) { S.budget = null; S.budgetGeladen = true; return; } try { BE.status = "test"; S.budget = await db.loadBudget(); if (S.budget && !S.bmaand) S.bmaand = S.budget.huidig; } catch(e){ console.error(e); S.budget = null; } S.budgetGeladen = true; }
 async function herlaadAlles(){ S.gerechten = await db.loadGerechten(); await herlaadVoorstel(); await Promise.all([herlaadWeek(), herlaadProducten(), herlaadAgenda(), herlaadGezin(), herlaadBudget(), herlaadDiepvries(), herlaadVoorraad()]); await herlaadR5(); }
 const gerecht = id => S.gerechten.find(g => g.id === id);
 const slot = (d, m) => S.menu.find(x => x.datum === d && x.moment === m);
@@ -4622,6 +4635,8 @@ function lijstItems(){
 /* ================= Weergave ================= */
 function render(){
   if (S.r5.km.aan) return r5KindRender();
+  const zb = zietBudget(), bt = document.querySelector('#tabs [data-tab="budget"]'); if (bt) bt.hidden = !zb;
+  if (S.tab === "budget" && !zb) S.tab = "vandaag";
   const eten = ["menu", "gerechten", "lijst", "diepvries"].includes(S.tab);
   document.querySelectorAll("#tabs button").forEach(b => b.setAttribute("aria-current", (b.dataset.tab === S.tab || ("eten" in b.dataset && eten)) ? "page" : "false"));
   $("#weeknav").hidden = ["gerechten", "vandaag", "lijsten", "diepvries"].includes(S.tab) || (S.tab === "budget" && S.budgetView === "rekeningen");
