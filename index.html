@@ -4087,6 +4087,43 @@ function ovTerugblik() {
     </section>${ovDuimenKinderen(tb)}`;
 }
 
+/* Mental load: wie volgt de taken op (duimpjes gegeven), per week, de laatste 8 weken. Enkel voor ouders.
+   Telt op het moment dat de duim gezet werd, niet op de datum van de taak. */
+function ovOpvolging() {
+  if (!isOuder()) return "";
+  const ouders = S.leden.filter(l => ["beheerder", "lid"].includes(l.rol || "lid") && l.heeft_account !== false);
+  if (!ouders.length) return "";
+  const ma = d => { const x = new Date(d); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
+  const nu = ma(new Date()).getTime(), weken = [];
+  for (let i = 7; i >= 0; i--) { const w = new Date(nu); w.setDate(w.getDate() - 7 * i); weken.push(w.getTime()); }
+  const tel = new Map(weken.map(w => [w, new Map()])); let zonder = 0, totaal = 0;
+  for (const v of (S.duim || new Map()).values()) {
+    if (!v.op) continue; const w = ma(v.op).getTime(); if (!tel.has(w)) continue;
+    totaal++; if (!v.door) { zonder++; continue; }
+    const m = tel.get(w); m.set(v.door, (m.get(v.door) || 0) + 1);
+  }
+  if (!totaal) return `<section class="ov-sectie"><h3>Wie volgt de kinderen op</h3><p class="muted" style="margin:0">Nog geen duimpjes gegeven. Zodra jullie taken van de kinderen beoordelen, zie je hier per week wie dat doet.</p></section>`;
+  const max = Math.max(1, ...weken.flatMap(w => ouders.map(o => tel.get(w).get(o.id) || 0)));
+  const W = 340, H = 150, l = 26, r = 6, top = 10, bh = H - top - 24, gw = (W - l - r) / weken.length, bw = Math.min(14, (gw - 6) / ouders.length - 2);
+  const y = v => top + bh - v / max * bh;
+  const ticks = [0, Math.ceil(max / 2), max].filter((v, i, a) => a.indexOf(v) === i);
+  const lbl = w => { const d = new Date(w); return `${d.getDate()}/${d.getMonth() + 1}`; };
+  const svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Duimpjes per ouder per week" style="width:100%;max-width:520px;height:auto;display:block">
+    ${ticks.map(v => `<line x1="${l}" x2="${W - r}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${l - 4}" y="${y(v) + 4}" text-anchor="end" font-size="10" fill="var(--muted)">${v}</text>`).join("")}
+    ${weken.map((w, i) => { const x0 = l + i * gw + (gw - ouders.length * (bw + 2)) / 2;
+      return ouders.map((o, j) => { const v = tel.get(w).get(o.id) || 0; if (!v) return "";
+        return `<rect x="${(x0 + j * (bw + 2)).toFixed(1)}" y="${y(v).toFixed(1)}" width="${bw.toFixed(1)}" height="${(bh + top - y(v)).toFixed(1)}" rx="2" fill="${o.kleur}"><title>${esc(o.naam)}: ${v} in de week van ${lbl(w)}</title></rect>`; }).join("")
+        + `<text x="${(l + i * gw + gw / 2).toFixed(1)}" y="${H - 8}" text-anchor="middle" font-size="10" fill="var(--muted)">${i === weken.length - 1 ? "deze w." : lbl(w)}</text>`; }).join("")}
+  </svg>`;
+  const dezeWeek = tel.get(nu), som = ouders.reduce((a, o) => a + (dezeWeek.get(o.id) || 0), 0);
+  const acht = ouders.map(o => ({ o, n: weken.reduce((a, w) => a + (tel.get(w).get(o.id) || 0), 0) })), som8 = acht.reduce((a, x) => a + x.n, 0);
+  return `<section class="ov-sectie"><h3>Wie volgt de kinderen op</h3>
+    <p class="muted" style="margin:0 0 6px;font-size:.88rem">Aantal duimpjes per week (taken van de kinderen opgevolgd en beoordeeld).</p>${svg}
+    <p class="legende">${acht.map(x => `<span><i style="display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:${x.o.kleur}"></i>${esc(x.o.naam)} ${som8 ? Math.round(100 * x.n / som8) : 0} %</span>`).join("")}<span class="muted">laatste 8 weken</span></p>
+    ${som ? `<p class="muted" style="font-size:.85rem;margin:0">Deze week: ${ouders.map(o => `${esc(o.naam)} ${dezeWeek.get(o.id) || 0}`).join(" · ")}</p>` : ""}
+    ${zonder ? `<p class="muted" style="font-size:.8rem;margin:2px 0 0">${zonder} duimpje(s) zonder gekende ouder.</p>` : ""}</section>`;
+}
+
 /* Enkel voor ouders: alle taken van de kinderen van de afgelopen dagen, met duimpjes en een telling per kind */
 function ovDuimenKinderen(tb) {
   if (!isOuder()) return "";
@@ -4096,7 +4133,8 @@ function ovDuimenKinderen(tb) {
     const it = alle.filter(x => x.lid_id === k.id); if (!it.length) return "";
     const t = duimTelling(it);
     return `<div class="ov-kindkop"><b>${esc(k.naam)}</b><span class="muted">${it.filter(x => x.klaar).length}/${it.length} gedaan · 👍 ${t.op} · 👎 ${t.neer}</span></div>
-      <ul class="ov-duimen">${it.map(x => `<li><span class="wat">${x.klaar ? "✓" : "✗"} ${esc(x.titel)}<small>${r5DagKort(x.datum)}${x.klaar ? "" : " · niet afgevinkt"}</small></span>${duimHtml(x.id, x.datum)}</li>`).join("")}</ul>`;
+      <ul class="ov-duimen">${it.map(x => { const i = duimInfo(x.id, x.datum), wie = i && i.door && lid(i.door) ? lid(i.door).naam : "";
+        return `<li><span class="wat">${x.klaar ? "✓" : "✗"} ${esc(x.titel)}<small>${r5DagKort(x.datum)}${x.klaar ? "" : " · niet afgevinkt"}${wie ? ` · ${i.duim > 0 ? "👍" : "👎"} van ${esc(wie)}` : ""}</small></span>${duimHtml(x.id, x.datum)}</li>`; }).join("")}</ul>`;
   }).join("");
   return blok ? `<section class="ov-sectie"><h3>Duimpjes voor de kinderen</h3><p class="muted" style="font-size:.85rem;margin-top:0">Alleen ouders zien dit. Tik nog eens op een duim om hem weg te halen.</p>${blok}</section>` : "";
 }
@@ -4133,6 +4171,7 @@ function ovVerdelen() {
       <p class="legende"><span><i class="lg-denkt"></i>denkt eraan</span><span><i class="lg-doet"></i>doet het</span><span class="muted">aantal taken deze week</span></p>
       ${bal.zonderUitvoerder || bal.zonderEigenaar ? `<p class="neg-tekst" style="margin:4px 0">${bal.zonderUitvoerder ? `${bal.zonderUitvoerder}× zonder uitvoerder` : ""}${bal.zonderUitvoerder && bal.zonderEigenaar ? " · " : ""}${bal.zonderEigenaar ? `${bal.zonderEigenaar}× denkt niemand eraan` : ""}</p>` : ""}
       <p class="muted" style="font-size:.88rem">Het hoeft niet 50/50. Voelt dit haalbaar en eerlijk voor jullie allebei?${kinderen.length ? ` Het denkwerk achter de taken van ${kinderen.map(k => esc(k.naam)).join(" en ")} telt mee bij wie eraan denkt.` : ""}</p></section>
+    ${ovOpvolging()}
     <section class="ov-sectie"><div class="ag-kop" style="margin:0"><h3>Taken in de planweek</h3><button class="knop sec klein" data-ovtaak>+ Taak</button></div>
       ${reeksen.length ? `<div class="ov-taken">${reeksen.map(x => `<div class="ov-taak ${!x.lid_id || !(x.eigenaar_id || x.lid_id) ? "leeg" : ""}">
           <span class="ov-tt"><b>${esc(x.titel)}</b><small>${x.data.slice(0, 4).map(r5DagKort).join(", ")}${x.data.length > 4 ? ` +${x.data.length - 4}` : ""}${x.herh ? " · reeks" : ""}</small></span>
@@ -4912,14 +4951,14 @@ setInterval(() => {
    Tieners en kinderen zien niets: de database weigert het (RLS op gezin.taak_duim) en in kindmodus wordt niets getoond. */
 "use strict";
 window.DUIM_LOCAL = {
-  async loadDuimen() { return Object.entries(this.d.duim || {}).map(([k, v]) => { const [taak_id, datum] = k.split("|"); return { taak_id, datum, duim: v }; }); },
-  async zetDuim(taak, datum, duim) { const d = this.d.duim = this.d.duim || {}; if (duim) d[taak + "|" + datum] = duim; else delete d[taak + "|" + datum]; this.save(); }
+  async loadDuimen() { return Object.entries(this.d.duim || {}).map(([k, v]) => { const [taak_id, datum] = k.split("|"); return typeof v === "object" ? { taak_id, datum, ...v } : { taak_id, datum, duim: v }; }); },
+  async zetDuim(taak, datum, duim) { const d = this.d.duim = this.d.duim || {}; if (duim) d[taak + "|" + datum] = { duim, door_lid: S.ik, op: new Date().toISOString() }; else delete d[taak + "|" + datum]; this.save(); }
 };
 window.DUIM_SUPA = {
   async loadDuimen() {
-    const r = await this.g.from("taak_duim").select("taak_id, datum, duim").eq("huishouden_id", this.h).gte("datum", AG.plus(AG.iso(new Date()), -60));
+    const r = await this.g.from("taak_duim").select("taak_id, datum, duim, door, op").eq("huishouden_id", this.h).gte("op", new Date(Date.now() - 100 * 864e5).toISOString());
     if (r.error) { console.warn("duimen:", r.error.message); return []; }
-    return r.data || [];
+    return (r.data || []).map(x => ({ ...x, door_lid: (S.leden.find(l => l.user_id && l.user_id === x.door) || {}).id || null }));
   },
   async zetDuim(taak, datum, duim) {
     if (!duim) return this.ok(await this.g.from("taak_duim").delete().eq("taak_id", taak).eq("datum", datum));
@@ -4930,18 +4969,20 @@ window.DUIM_SUPA = {
 
 const isOuder = () => { const me = lid(S.ik); return !!me && ["beheerder", "lid"].includes(me.rol || "lid") && !(S.r5 && S.r5.km && S.r5.km.aan); };
 const isKindLid = id => { const l = id && lid(id); return !!l && ["kind", "tiener"].includes(l.rol); };
-const duimVan = (taak, datum) => (S.duim && S.duim.get(taak + "|" + datum)) || 0;
+const duimInfo = (taak, datum) => (S.duim && S.duim.get(taak + "|" + datum)) || null;
+const duimVan = (taak, datum) => (duimInfo(taak, datum) || {}).duim || 0;
 async function herlaadDuimen() {
   if (!isOuder()) { S.duim = new Map(); return; }
-  try { S.duim = new Map((await db.loadDuimen()).map(r => [r.taak_id + "|" + r.datum, r.duim])); } catch (e) { console.error(e); S.duim = new Map(); }
+  try { S.duim = new Map((await db.loadDuimen()).map(r => [r.taak_id + "|" + r.datum, { duim: r.duim, door: r.door_lid || null, op: r.op || null }])); } catch (e) { console.error(e); S.duim = new Map(); }
 }
 /* Twee knopjes; nog eens op dezelfde duim tikken haalt hem weg */
 function duimHtml(taak, datum) {
   if (!isOuder() || !datum || datum > AG.iso(new Date())) return "";
-  const v = duimVan(taak, datum);
-  return `<span class="duim" role="group" aria-label="Beoordeling">
-    <button type="button" data-duim="${taak}|${datum}|1" aria-pressed="${v === 1}" aria-label="Duimpje omhoog" title="Duimpje omhoog">👍</button>
-    <button type="button" data-duim="${taak}|${datum}|-1" aria-pressed="${v === -1}" aria-label="Duimpje omlaag" title="Duimpje omlaag">👎</button></span>`;
+  const i = duimInfo(taak, datum) || {}, v = i.duim || 0, wie = i.door && lid(i.door) ? lid(i.door).naam : "";
+  const tt = (w, l) => v === w && wie ? `${l} van ${wie}` : l;
+  return `<span class="duim" role="group" aria-label="Beoordeling${wie ? " van " + esc(wie) : ""}">
+    <button type="button" data-duim="${taak}|${datum}|1" aria-pressed="${v === 1}" aria-label="${esc(tt(1, "Duimpje omhoog"))}" title="${esc(tt(1, "Duimpje omhoog"))}">👍</button>
+    <button type="button" data-duim="${taak}|${datum}|-1" aria-pressed="${v === -1}" aria-label="${esc(tt(-1, "Duimpje omlaag"))}" title="${esc(tt(-1, "Duimpje omlaag"))}">👎</button></span>`;
 }
 function duimTelling(items) {
   let op = 0, neer = 0; for (const x of items) { const v = duimVan(x.id, x.datum); if (v > 0) op++; else if (v < 0) neer++; }
@@ -4952,7 +4993,7 @@ document.addEventListener("click", ev => {
   ev.preventDefault(); ev.stopPropagation();
   if (!isOuder()) return;
   const [taak, datum, w] = b.dataset.duim.split("|"), nieuw = duimVan(taak, datum) === +w ? 0 : +w;
-  S.duim = S.duim || new Map(); if (nieuw) S.duim.set(taak + "|" + datum, nieuw); else S.duim.delete(taak + "|" + datum);
+  S.duim = S.duim || new Map(); if (nieuw) S.duim.set(taak + "|" + datum, { duim: nieuw, door: S.ik, op: new Date().toISOString() }); else S.duim.delete(taak + "|" + datum);
   const grp = b.closest(".duim"); if (grp) grp.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", String(+x.dataset.duim.split("|")[2] === nieuw)));
   run(async () => {
     try { await db.zetDuim(taak, datum, nieuw || null); }
@@ -5209,7 +5250,7 @@ class SupaStore {
     const herh = r => r.herh_freq ? {freq: r.herh_freq, interval: r.herh_interval || 1, dagen: r.herh_dagen || [], tot: r.herh_tot} : null;
     const klaar = {}; this.ok(tk).forEach(x => (klaar[x.taak_id] = klaar[x.taak_id] || []).push(x.datum));
     return {
-      leden: this.ok(l).map(x => ({id: x.id, naam: x.naam, kleur: x.kleur || "#5b6a64", heeft_account: !!x.user_id, rol: x.rol, avatar: x.avatar || null})),
+      leden: this.ok(l).map(x => ({id: x.id, naam: x.naam, kleur: x.kleur || "#5b6a64", heeft_account: !!x.user_id, user_id: x.user_id || null, rol: x.rol, avatar: x.avatar || null})),
       kalenders: this.ok(k).map(x => ({id: x.id, naam: x.naam, kleur: x.kleur, soort: x.soort})),
       afspraken: this.ok(a).map(x => ({...x, start_tijd: x.start_tijd && x.start_tijd.slice(0, 5), eind_tijd: x.eind_tijd && x.eind_tijd.slice(0, 5), herhaling: herh(x), uitzonderingen: x.uitzonderingen || [], deelnemers: x.deelnemers || [], ics: !!x.ics_uid, google: gmap.has(x.id), google_ro: gmap.get(x.id) === true})),
       taken: this.ok(t).map(x => ({...x, tijd: x.tijd && x.tijd.slice(0, 5), herhaling: herh(x), uitzonderingen: x.uitzonderingen || [], klaar: klaar[x.id] || []})),
