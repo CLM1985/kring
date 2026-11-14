@@ -7,7 +7,7 @@
 // Deploy: supabase functions deploy ha-energie   (verify_jwt aan)
 //
 // Body: { actie: "status" }                       → live, prijzen, zonneverwachting, laadpunt
-//       { actie: "historiek" }                    → net en zon van vandaag per kwartier (HA-statistieken)
+//       { actie: "historiek", dag?: "gisteren" }  → net en zon per kwartier (HA-statistieken); gisteren ook de prijzen
 //       { actie: "laadmodus", modus: "smart"|"now"|"off" }
 
 const CORS = {
@@ -79,29 +79,55 @@ async function evccStatus() {
   };
 }
 
-// Net en zon van vandaag per kwartier, uit de 5-minutenstatistieken van HA (websocket).
-function historiek(): Promise<{ net: [number, number][]; zon: [number, number][] }> {
+// Net en zon per kwartier voor één dag (vandaag of gisteren), uit de 5-minutenstatistieken van HA (websocket).
+// Voor gisteren ook de prijs per kwartier: sensor.frank_current_price + dezelfde toeslag als in evcc
+// (evcc: 1,1321 × markt + 0,0159 + 0,1205; de Frank-sensor is 1,1321 × markt + 0,0159). Pas TOESLAG mee aan als evcc wijzigt.
+const FRANK = "sensor.frank_current_price";
+const TOESLAG = 0.1205;
+function middernacht(dagen: number) {
+  const lokaal = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Brussels" }));   // Deno draait in UTC
+  const verschil = Date.now() - lokaal.getTime();
+  lokaal.setHours(0, 0, 0, 0); lokaal.setDate(lokaal.getDate() + dagen);
+  return new Date(Math.round((lokaal.getTime() + verschil) / 900000) * 900000);   // afronden: toLocaleString verliest de milliseconden
+}
+function historiek(dag: string): Promise<{ van: number; tot: number; net: [number, number][]; zon: [number, number][]; prijzen?: [number, number, number][] }> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(HA_URL.replace(/^http/, "ws") + "/api/websocket");
     const stop = setTimeout(() => { try { ws.close(); } catch { /* */ } reject(new Error("Home Assistant antwoordt niet")); }, 15000);
-    const middernacht = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Brussels" }));
-    const verschil = Date.now() - middernacht.getTime();
-    middernacht.setHours(0, 0, 0, 0);
-    const start = new Date(middernacht.getTime() + verschil);
+    const gisteren = dag === "gisteren";
+    const start = middernacht(gisteren ? -1 : 0), eind = gisteren ? middernacht(0) : new Date();
+    const uit: { stat?: Record<string, { start: number; mean: number }[]>; prijs?: Record<string, { s: string; lu: number }[]> } = {};
+    const klaar = () => {
+      if (!uit.stat || (gisteren && !uit.prijs)) return;
+      clearTimeout(stop); ws.close();
+      const perKwartier = (rijen: { start: number; mean: number }[] = []) => {
+        const b = new Map<number, number[]>();
+        for (const r of rijen) { const k = Math.floor(r.start / 900000) * 900; if (!b.has(k)) b.set(k, []); b.get(k)!.push(r.mean); }
+        return [...b].map(([k, v]) => [k, Math.round(v.reduce((a, x) => a + x, 0) / v.length)] as [number, number]);
+      };
+      const res: { van: number; tot: number; net: [number, number][]; zon: [number, number][]; prijzen?: [number, number, number][] } =
+        { van: start.getTime() / 1000, tot: (gisteren ? eind.getTime() : middernacht(1).getTime()) / 1000, net: perKwartier(uit.stat[NET]), zon: perKwartier(uit.stat[ZON]) };
+      if (gisteren) {
+        const w = (uit.prijs![FRANK] || []).map((x) => [x.lu, parseFloat(x.s)] as [number, number]).filter((x) => isFinite(x[1])).sort((a, b) => a[0] - b[0]);
+        res.prijzen = [];
+        for (let t = res.van; t < res.tot; t += 900) {
+          let v: number | null = null; for (const [lu, p] of w) { if (lu <= t + 5) v = p; else break; }
+          if (v != null) res.prijzen.push([t, t + 900, Math.round((v + TOESLAG) * 10000) / 10000]);
+        }
+      }
+      resolve(res);
+    };
     ws.onmessage = (e) => {
       const m = JSON.parse(String(e.data));
       if (m.type === "auth_required") ws.send(JSON.stringify({ type: "auth", access_token: HA_TOKEN }));
       else if (m.type === "auth_invalid") { clearTimeout(stop); ws.close(); reject(new Error("HA-token ongeldig")); }
-      else if (m.type === "auth_ok") ws.send(JSON.stringify({ id: 1, type: "recorder/statistics_during_period", start_time: start.toISOString(), statistic_ids: [NET, ZON], period: "5minute", types: ["mean"] }));
-      else if (m.id === 1) {
-        clearTimeout(stop); ws.close();
-        if (!m.success) return reject(new Error("Statistieken niet beschikbaar"));
-        const perKwartier = (rijen: { start: number; mean: number }[] = []) => {
-          const b = new Map<number, number[]>();
-          for (const r of rijen) { const k = Math.floor(r.start / 900000) * 900; if (!b.has(k)) b.set(k, []); b.get(k)!.push(r.mean); }
-          return [...b].map(([k, v]) => [k, Math.round(v.reduce((a, x) => a + x, 0) / v.length)] as [number, number]);
-        };
-        resolve({ net: perKwartier(m.result[NET]), zon: perKwartier(m.result[ZON]) });
+      else if (m.type === "auth_ok") {
+        ws.send(JSON.stringify({ id: 1, type: "recorder/statistics_during_period", start_time: start.toISOString(), end_time: eind.toISOString(), statistic_ids: [NET, ZON], period: "5minute", types: ["mean"] }));
+        if (gisteren) ws.send(JSON.stringify({ id: 2, type: "history/history_during_period", start_time: new Date(start.getTime() - 3600e3).toISOString(), end_time: eind.toISOString(), entity_ids: [FRANK], minimal_response: true, no_attributes: true }));
+      } else if (m.id === 1 || m.id === 2) {
+        if (!m.success) { clearTimeout(stop); ws.close(); return reject(new Error("Historiek niet beschikbaar")); }
+        if (m.id === 1) uit.stat = m.result; else uit.prijs = m.result;
+        klaar();
       }
     };
     ws.onerror = () => { clearTimeout(stop); reject(new Error("Verbinding met Home Assistant mislukt")); };
@@ -115,10 +141,10 @@ Deno.serve(async (req) => {
     const auth = req.headers.get("Authorization") || "";
     const toegang = await rpc(auth, "energie_toegang");
     if (!toegang?.lezen) return antwoord({ fout: "Geen toegang tot de energiegegevens" }, 403);
-    const { actie = "status", modus } = await req.json().catch(() => ({}));
+    const { actie = "status", modus, dag } = await req.json().catch(() => ({}));
 
     if (actie === "status") return antwoord({ ...(await evccStatus()), magSturen: !!toegang.sturen });
-    if (actie === "historiek") return antwoord(await historiek());
+    if (actie === "historiek") return antwoord(await historiek(dag === "gisteren" ? "gisteren" : "vandaag"));
     if (actie === "laadmodus") {
       if (!MODI.includes(modus)) return antwoord({ fout: "Onbekende laadmodus" }, 400);
       await rpc(auth, "energie_registreer", { p_actie: "laadmodus", p_waarde: modus });   // weigert tieners en kinderen

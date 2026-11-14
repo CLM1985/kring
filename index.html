@@ -4495,6 +4495,9 @@ body:not(.breed) .en-grafiek{order:9}
 .en-kaart .en-nu{stroke:var(--fg);stroke-width:1;stroke-dasharray:3 3}
 .en-kaart .en-band{fill:var(--accent-soft)}
 .en-kaart .en-band-t{font-size:11px;fill:var(--fg);font-weight:700}
+.en-grafiek .en-kop{flex-wrap:wrap;align-items:center}
+.en-grafiek .seg button{padding:6px 12px}
+@media (max-width:420px){ .en-grafiek .seg{width:100%} .en-grafiek .seg button{flex:1} }
 .en-stroom svg{display:block;width:100%;max-width:440px;height:auto;margin:0 auto}
 .en-stroom .en-knoop{fill:var(--surface)}
 .en-stroom .en-lbl{font-size:12px;fill:var(--muted);text-anchor:middle}
@@ -4611,14 +4614,16 @@ function enDemoStatus(modus) {
     laadpunt: { titel: "Laadpaal", modus, altijdLaden: "off", verbonden: true, laadt: wagen > 0, vermogen: wagen, sessieKwh: 4.2, sessieDuurMin: 75, wagen: "", soc: null, plan: false, maxA: 16 },
     prijzen, injectie, zon, zonKwh: { vandaag: 9.4, morgen: 6.1 } };
 }
-function enDemoHist() {
-  const KW = 900, d = new Date(); d.setHours(0, 0, 0, 0); const t0 = d.getTime() / 1000, nu = Date.now() / 1000, net = [], zon = [];
+function enDemoHist(gisteren) {
+  const KW = 900, d = new Date(); d.setHours(0, 0, 0, 0); if (gisteren) d.setDate(d.getDate() - 1);
+  const t0 = d.getTime() / 1000, nu = gisteren ? t0 + 86400 + KW : Date.now() / 1000, net = [], zon = [];
   for (let t = t0; t < nu - KW; t += KW) { const u = (t - t0) / 3600, z = u > 8 && u < 17 ? Math.round(3000 * Math.sin((u - 8) / 9 * Math.PI)) : 0;
     const v = 350 + (u >= 7 && u < 8 ? 900 : 0) + (u >= 18 && u < 19.5 ? 2600 : 0); zon.push([t, z]); net.push([t, v - z]); }
-  return { net, zon };
+  if (!gisteren) return { net, zon };
+  return { net, zon, prijzen: enDemoStatus("smart").prijzen.map(p => [p[0] - 86400, p[1] - 86400, +(p[2] * 0.95).toFixed(4)]) };
 }
 window.EN_LOCAL = {
-  async loadEnergie(actie) { const e = this.d.energie = this.d.energie || { modus: "smart" }; return actie === "historiek" ? enDemoHist() : enDemoStatus(e.modus); },
+  async loadEnergie(actie, extra) { const e = this.d.energie = this.d.energie || { modus: "smart" }; return actie === "historiek" ? enDemoHist(extra && extra.dag === "gisteren") : enDemoStatus(e.modus); },
   async zetLaadmodus(m) { this.d.energie = { ...(this.d.energie || {}), modus: m }; this.save(); return enDemoStatus(m); }
 };
 window.EN_SUPA = {
@@ -4628,7 +4633,7 @@ window.EN_SUPA = {
     if (data && data.fout) throw new Error(data.fout);
     return data;
   },
-  async loadEnergie(actie) { return this.enRoep({ actie }); },
+  async loadEnergie(actie, extra) { return this.enRoep({ actie, ...(extra || {}) }); },
   async zetLaadmodus(m) { return this.enRoep({ actie: "laadmodus", modus: m }); }
 };
 
@@ -4636,7 +4641,8 @@ const EN_MODI = [["off", "Uit"], ["smart", "Slim"], ["now", "Snel"]];
 const enKw = w => w == null ? "–" : (Math.abs(w) / 1000).toLocaleString("nl-BE", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const enCt = p => p == null ? "–" : (p * 100).toLocaleString("nl-BE", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + " ct";
 const enUur = t => new Date(t * 1000).toLocaleTimeString("nl-BE", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Brussels" });
-const enDag = t => { const a = new Date(t * 1000).toLocaleDateString("nl-BE", { timeZone: "Europe/Brussels" }), b = new Date().toLocaleDateString("nl-BE", { timeZone: "Europe/Brussels" }); return a === b ? "" : "morgen "; };
+const enDag = t => { const f = d => d.toLocaleDateString("nl-BE", { timeZone: "Europe/Brussels" }), a = f(new Date(t * 1000)), n = new Date();
+  return a === f(n) ? "" : a === f(new Date(n.getTime() - 864e5)) ? "gisteren " : a === f(new Date(n.getTime() + 864e5)) ? "morgen " : ""; };
 
 async function herlaadEnergie(metHist) {
   const e = S.en = S.en || {};
@@ -4678,7 +4684,9 @@ function viewEnergie() {
     ${e.fout ? `<div class="en-fout" style="margin-bottom:12px">Laatste update mislukt: ${esc(e.fout)}</div>` : ""}
     <div class="en-grid"><div class="en-col">
       <section class="en-blok en-stroom"><h3>Nu</h3>${enStroomHtml(s, e.hist)}</section>
-      <section class="en-blok en-grafiek"><h3>Vandaag${(s.prijzen || []).some(p => enDag(p[0])) ? " en morgen" : ""}</h3>${enKaartHtml(s, e.hist, adv)}</section>
+      <section class="en-blok en-grafiek"><div class="en-kop" style="margin-bottom:8px"><h3 style="margin:0">Prijs en verbruik</h3>
+        <div class="seg" role="group" aria-label="Dag">${[[-1, "Gisteren"], [0, "Vandaag"], [1, "Morgen"]].map(([k, l]) => `<button data-endag="${k}" aria-pressed="${(S.enDag || 0) === k}">${l}</button>`).join("")}</div></div>
+        ${enKaartHtml(s, e.hist, adv)}</section>
     </div><div class="en-col">${laad}${advHtml}</div></div>`;
   enKaartHover();
 }
@@ -4732,9 +4740,15 @@ function enStroomHtml(s, h) {
 /* Dagkaart: boven prijs per kwartier (staafjes), onder vermogen (zon gemeten + verwachting, net). Twee panelen, elk één as. */
 function enKaartHtml(s, h, adv) {
   const KW = 900, nu = Date.now() / 1000;
-  const d = new Date(); d.setHours(0, 0, 0, 0); const t0 = d.getTime() / 1000;
-  const pr = s.prijzen || [];
-  const t1 = Math.max(t0 + 86400, pr.length ? pr[pr.length - 1][1] : 0);
+  // Altijd één dag (24 u): gisteren, vandaag (standaard) of morgen
+  const dagOff = S.enDag || 0, e = S.en || {};
+  const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + dagOff); const t0 = d.getTime() / 1000;
+  const d1 = new Date(d); d1.setDate(d1.getDate() + 1); const t1 = d1.getTime() / 1000;
+  if (dagOff < 0) { const g = e.gisteren && e.gisteren.van === t0 ? e.gisteren : null;
+    if (!g) { if (!e.gisterenLaden) enLaadGisteren(t0); return `<p class="muted">${e.gisterenFout ? "Gisteren ophalen mislukt: " + esc(e.gisterenFout) : "Gisteren ophalen…"}</p>`; }
+    h = g; }
+  else if (dagOff > 0) h = null;
+  const pr = (dagOff < 0 ? h.prijzen || [] : s.prijzen || []).filter(p => p[0] >= t0 && p[0] < t1);
   const W = Math.max(320, Math.min(1100, ($("#view") && $("#view").clientWidth || 700) - (document.body.classList.contains("breed") ? 440 : 30)));
   const P = { l: 40, r: 8 }, iw = W - P.l - P.r;
   const x = t => P.l + (t - t0) / (t1 - t0) * iw;
@@ -4743,8 +4757,8 @@ function enKaartHtml(s, h, adv) {
   const pMin = pw.length ? Math.floor(Math.min(...pw) * 20) / 20 : 0, pMax = pw.length ? Math.max(pMin + 0.05, Math.ceil(Math.max(...pw) * 20) / 20) : 0.5;   // stappen van 5 ct
   const yp = v => pTop + pH - (v - pMin) / (pMax - pMin) * pH;
   // Vermogenspaneel
-  const zonH = (h && h.zon || []).filter(p => p[0] >= t0), netH = (h && h.net || []).filter(p => p[0] >= t0);
-  const zonF = (s.zon || []).filter(p => p[0] >= Math.floor(nu / KW) * KW && p[0] < t1);
+  const zonH = (h && h.zon || []).filter(p => p[0] >= t0 && p[0] < t1), netH = (h && h.net || []).filter(p => p[0] >= t0 && p[0] < t1);
+  const zonF = dagOff < 0 ? [] : (s.zon || []).filter(p => p[0] >= Math.max(t0, Math.floor(nu / KW) * KW) && p[0] < t1);
   const alle = [...zonH.map(p => p[1]), ...netH.map(p => p[1]), ...zonF.map(p => p[1]), 0].map(v => v / 1000);
   const vMax = Math.max(1, ...alle), vMin = Math.min(0, ...alle);
   const vTop = pTop + pH + 34, vH = 130, yv = v => vTop + vH - (v - vMin) / (vMax - vMin) * vH;
@@ -4763,10 +4777,10 @@ function enKaartHtml(s, h, adv) {
   const pTicks = [pMin, (pMin + pMax) / 2, pMax].map(v => Math.round(v * 1000) / 1000);
   const vStap = vMax - vMin > 6 ? 2 : 1, vTicks = []; for (let v = Math.ceil(vMin / vStap) * vStap; v <= vMax; v += vStap) vTicks.push(v);
   // Adviesbanden (enkel de eerste twee toestellen met een ander moment dan nu, om het leesbaar te houden)
-  const banden = (adv || []).filter(a => a.best && a.best.start > nu + 60).slice(0, 3);
+  const banden = (adv || []).filter(a => a.best && a.best.start > nu + 60 && a.best.start < t1 && a.best.eind > t0).slice(0, 3);
   const svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Kwartierprijzen en vermogen vandaag">
     <text class="en-as" x="${P.l}" y="11">Prijs (ct/kWh${perUur ? ", uurgemiddelde" : ""})</text>
-    ${pTicks.map(v => `<line class="en-grid-l" x1="${P.l}" x2="${W - P.r}" y1="${yp(v)}" y2="${yp(v)}"/><text class="en-as" x="${P.l - 5}" y="${yp(v) + 4}" text-anchor="end">${(v * 100).toLocaleString("nl-BE", { maximumFractionDigits: 1 })}</text>`).join("")}
+    ${(pr.length ? pTicks : []).map(v => `<line class="en-grid-l" x1="${P.l}" x2="${W - P.r}" y1="${yp(v)}" y2="${yp(v)}"/><text class="en-as" x="${P.l - 5}" y="${yp(v) + 4}" text-anchor="end">${(v * 100).toLocaleString("nl-BE", { maximumFractionDigits: 1 })}</text>`).join("")}
     ${banden.map((a, i) => `<rect class="en-band" x="${x(a.best.start)}" y="${vTop}" width="${Math.max(2, x(a.best.eind) - x(a.best.start))}" height="${vH}" opacity=".8"/><text class="en-band-t" x="${x(a.best.start) + 3}" y="${vTop + 12 + i * 13}">${a.toestel.ico}</text>`).join("")}
     ${komend.length ? `<path d="${trap(komend)}L${x(komend[komend.length - 1][1])},${pTop + pH}L${x(komend[0][0])},${pTop + pH}Z" fill="var(--en-prijs)" opacity=".12"/>` : ""}
     <path d="${trap(voorbij)}" fill="none" stroke="var(--en-prijs)" stroke-width="2" opacity=".45"/><path d="${trap(komend)}" fill="none" stroke="var(--en-prijs)" stroke-width="2"/>
@@ -4776,7 +4790,8 @@ function enKaartHtml(s, h, adv) {
     <path d="${pad(zonF, true)}" fill="var(--en-zon)" opacity=".12"/><path d="${pad(zonF)}" fill="none" stroke="var(--en-zon)" stroke-width="2" stroke-dasharray="4 3"/>
     <path d="${pad(netH)}" fill="none" stroke="var(--en-net)" stroke-width="2"/>
     ${uren.map(t => `<text class="en-as" x="${x(t)}" y="${H - 4}" text-anchor="middle">${enUur(t).replace(":00", "")}u</text>`).join("")}
-    <line class="en-nu" x1="${x(nu)}" x2="${x(nu)}" y1="${pTop - 4}" y2="${vTop + vH}"/>
+    ${nu >= t0 && nu < t1 ? `<line class="en-nu" x1="${x(nu)}" x2="${x(nu)}" y1="${pTop - 4}" y2="${vTop + vH}"/>` : ""}
+    ${!pr.length ? `<text class="en-as" x="${P.l + iw / 2}" y="${pTop + pH / 2 + 4}" text-anchor="middle">${dagOff > 0 ? "Prijzen voor morgen nog niet bekend (meestal vanaf de namiddag)" : "Geen prijzen"}</text>` : ""}
     <line id="en-kruis" stroke="var(--muted)" stroke-width="1" visibility="hidden" y1="${pTop}" y2="${vTop + vH}" x1="-10" x2="-10"/>
     <rect id="en-vang" x="${P.l}" y="0" width="${iw}" height="${H}" fill="transparent"/>
   </svg>`;
@@ -4785,8 +4800,15 @@ function enKaartHtml(s, h, adv) {
     return `<tr><td>${enDag(t)}${enUur(t)}</td><td>${p ? enCt(p[2]) : ""}</td><td>${z != null ? enKw(z) : ""}</td><td>${n != null ? (n < 0 ? "−" : "") + enKw(n) : ""}</td></tr>`; };
   const tabel = []; for (let t = t0; t < t1; t += 3600) tabel.push(rij(t));
   return `<div class="en-kaart">${svg}<div class="en-tip" id="en-tip" hidden></div></div>
-    <div class="en-leg"><span><i style="background:var(--en-prijs);height:3px"></i>Prijs per ${perUur ? "uur (gemiddeld)" : "kwartier"}</span><span><i style="background:var(--en-zon);opacity:.6"></i>Zon gemeten</span><span><i style="border:2px dashed var(--en-zon);height:6px"></i>Zon verwacht</span><span><i style="background:var(--en-net);height:3px"></i>Net (+ afname, − injectie)</span>${banden.length ? `<span><i style="background:var(--accent-soft)"></i>Advies</span>` : ""}</div>
+    <div class="en-leg">${pr.length ? `<span><i style="background:var(--en-prijs);height:3px"></i>Prijs per ${perUur ? "uur (gemiddeld)" : "kwartier"}</span>` : ""}${zonH.length ? `<span><i style="background:var(--en-zon);opacity:.6"></i>Zon gemeten</span>` : ""}${zonF.length ? `<span><i style="border:2px dashed var(--en-zon);height:6px"></i>Zon verwacht</span>` : ""}${netH.length ? `<span><i style="background:var(--en-net);height:3px"></i>Net (+ afname, − injectie)</span>` : ""}${banden.length ? `<span><i style="background:var(--accent-soft)"></i>Advies</span>` : ""}</div>
     <details class="en-meer"><summary>Tabel per uur</summary><table class="en-tabel"><thead><tr><th>Uur</th><th>Prijs (gem.)</th><th>Zon kW</th><th>Net kW</th></tr></thead><tbody>${tabel.join("")}</tbody></table></details>`;
+}
+
+function enLaadGisteren(t0) {
+  const e = S.en = S.en || {}; e.gisterenLaden = true; e.gisterenFout = null;
+  db.loadEnergie("historiek", { dag: "gisteren" })
+    .then(g => { e.gisteren = { ...g, van: t0 }; }, x => { e.gisterenFout = x.message || String(x); })
+    .finally(() => { e.gisterenLaden = false; if (S.tab === "energie") viewEnergie(); });
 }
 
 function enKaartHover() {
@@ -4810,6 +4832,8 @@ function enKaartHover() {
 }
 
 document.addEventListener("click", ev => {
+  const dg = ev.target.closest("[data-endag]");
+  if (dg) { S.enDag = +dg.dataset.endag; if (S.en) S.en.gisterenFout = null; viewEnergie(); return; }
   const b = ev.target.closest("[data-enmodus],[data-envernieuw]"); if (!b) return;
   if ("envernieuw" in b.dataset) { run(async () => { await herlaadEnergie(true); if (S.tab === "energie") viewEnergie(); }); return; }
   const m = b.dataset.enmodus, e = S.en || {};
