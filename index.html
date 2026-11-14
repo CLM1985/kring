@@ -4495,8 +4495,8 @@ body:not(.breed) .en-grafiek{order:9}
 .en-kaart .en-nu{stroke:var(--fg);stroke-width:1;stroke-dasharray:3 3}
 .en-kaart .en-band{fill:var(--accent-soft)}
 .en-kaart .en-band-t{font-size:11px;fill:var(--fg);font-weight:700}
-.en-grafiek .en-kop{flex-wrap:wrap;align-items:center}
-.en-grafiek .seg button{padding:6px 12px}
+.en-grafiek .en-kop,.en-stroom .en-kop{flex-wrap:wrap;align-items:center}
+.en-grafiek .seg button,.en-stroom .seg button{padding:6px 12px}
 @media (max-width:420px){ .en-grafiek .seg{width:100%} .en-grafiek .seg button{flex:1} }
 .en-stroom svg{display:block;width:100%;max-width:440px;height:auto;margin:0 auto}
 .en-stroom .en-knoop{fill:var(--surface)}
@@ -4616,11 +4616,11 @@ function enDemoStatus(modus) {
 }
 function enDemoHist(gisteren) {
   const KW = 900, d = new Date(); d.setHours(0, 0, 0, 0); if (gisteren) d.setDate(d.getDate() - 1);
-  const t0 = d.getTime() / 1000, nu = gisteren ? t0 + 86400 + KW : Date.now() / 1000, net = [], zon = [];
+  const t0 = d.getTime() / 1000, nu = gisteren ? t0 + 86400 + KW : Date.now() / 1000, net = [], zon = [], wagen = [];
   for (let t = t0; t < nu - KW; t += KW) { const u = (t - t0) / 3600, z = u > 8 && u < 17 ? Math.round(3000 * Math.sin((u - 8) / 9 * Math.PI)) : 0;
-    const v = 350 + (u >= 7 && u < 8 ? 900 : 0) + (u >= 18 && u < 19.5 ? 2600 : 0); zon.push([t, z]); net.push([t, v - z]); }
-  if (!gisteren) return { net, zon };
-  return { net, zon, prijzen: enDemoStatus("smart").prijzen.map(p => [p[0] - 86400, p[1] - 86400, +(p[2] * 0.95).toFixed(4)]) };
+    const c = u >= 11 && u < 14 ? 3400 : 0, v = 350 + (u >= 7 && u < 8 ? 900 : 0) + (u >= 18 && u < 19.5 ? 2600 : 0) + c; zon.push([t, z]); net.push([t, v - z]); wagen.push([t, c]); }
+  if (!gisteren) return { net, zon, wagen };
+  return { net, zon, wagen, prijzen: enDemoStatus("smart").prijzen.map(p => [p[0] - 86400, p[1] - 86400, +(p[2] * 0.95).toFixed(4)]) };
 }
 window.EN_LOCAL = {
   async loadEnergie(actie, extra) { const e = this.d.energie = this.d.energie || { modus: "smart" }; return actie === "historiek" ? enDemoHist(extra && extra.dag === "gisteren") : enDemoStatus(e.modus); },
@@ -4683,7 +4683,9 @@ function viewEnergie() {
     ${db.demo ? `<div class="banner"><b>Testversie</b> met fictieve prijzen en zon. In de echte versie komt alles live uit evcc en Home Assistant.</div>` : ""}
     ${e.fout ? `<div class="en-fout" style="margin-bottom:12px">Laatste update mislukt: ${esc(e.fout)}</div>` : ""}
     <div class="en-grid"><div class="en-col">
-      <section class="en-blok en-stroom"><h3>Nu</h3>${enStroomHtml(s, e.hist)}</section>
+      <section class="en-blok en-stroom"><div class="en-kop" style="margin-bottom:4px"><h3 style="margin:0">Energiestroom</h3>
+        <div class="seg" role="group" aria-label="Periode">${[["nu", "Nu"], ["vandaag", "Vandaag"]].map(([k, l]) => `<button data-enstroom="${k}" aria-pressed="${(S.enStroom || "nu") === k}">${l}</button>`).join("")}</div></div>
+        ${enStroomHtml(s, e.hist)}</section>
       <section class="en-blok en-grafiek"><div class="en-kop" style="margin-bottom:8px"><h3 style="margin:0">Prijs en verbruik</h3>
         <div class="seg" role="group" aria-label="Dag">${[[-1, "Gisteren"], [0, "Vandaag"], [1, "Morgen"]].map(([k, l]) => `<button data-endag="${k}" aria-pressed="${(S.enDag || 0) === k}">${l}</button>`).join("")}</div></div>
         ${enKaartHtml(s, e.hist, adv)}</section>
@@ -4697,8 +4699,21 @@ function enVerdeel(L) {
   const zh = Math.min(Z, H), zc = Math.min(Z - zh, C), zn = Math.max(0, Z - zh - zc);
   return { zh, zc, zn, nh: Math.max(0, H - zh), nc: Math.max(0, C - zc), Z, H, C };
 }
+/* Vandaag: per kwartier verdelen (huis = net + zon − wagen) en optellen tot kWh */
+function enVerdeelDag(h) {
+  const t = { zh: 0, zc: 0, zn: 0, nh: 0, nc: 0, Z: 0, H: 0, C: 0, af: 0, in: 0 }, zon = new Map((h && h.zon) || []), wagen = new Map((h && h.wagen) || []);
+  for (const [k, n] of (h && h.net) || []) {
+    const Z = Math.max(0, zon.get(k) || 0), C = Math.max(0, wagen.get(k) || 0), v = enVerdeel({ zon: Z, wagen: C, huis: Math.max(0, n + Z - C) });
+    for (const x of ["zh", "zc", "zn", "nh", "nc", "Z", "H", "C"]) t[x] += v[x] / 4;   // W per kwartier → Wh
+    if (n > 0) t.af += n / 4; else t.in -= n / 4;
+  }
+  const w = (h && h.wagen) || [];
+  t.wagenVanaf = w.length ? w[0][0] : null;
+  return t;
+}
 function enStroomHtml(s, h) {
-  const L = s.live || {}, lp = s.laadpunt || {}, v = enVerdeel(L);
+  const dag = S.enStroom === "vandaag";
+  const L = s.live || {}, lp = s.laadpunt || {}, v = dag ? enVerdeelDag(h) : enVerdeel(L);
   const beweeg = !matchMedia("(prefers-reduced-motion: reduce)").matches;
   const N = { zon: [180, 58], net: [58, 178], huis: [302, 178], wagen: [180, 290] }, R = 38;
   // Paden lopen altijd van bron naar bestemming
@@ -4707,7 +4722,7 @@ function enStroomHtml(s, h) {
     nh: "M94,178 L266,178", nc: "M86,201 C104,262 130,290 144,290",
   };
   const KL = { zh: "var(--en-zon)", zn: "var(--en-zon)", zc: "var(--en-zon)", nh: "var(--en-net)", nc: "var(--en-net)" };
-  const lijn = k => { const w = v[k] / 1000; if (w < 0.03) return `<path class="en-lijn" d="${PAD[k]}"/>`;
+  const lijn = k => { const w = dag ? v[k] / 4000 : v[k] / 1000; if (w < 0.03) return `<path class="en-lijn" d="${PAD[k]}"/>`;
     const sw = Math.min(6, 1.5 + w * 1.2), dur = Math.max(0.8, 3.2 - w * 0.6), n = w > 2 ? 3 : w > 0.8 ? 2 : 1;
     const bol = [...Array(n)].map((_, i) => `<circle r="${Math.min(5, 3 + w * 0.5).toFixed(1)}" fill="${KL[k]}">${beweeg ? `<animateMotion dur="${dur.toFixed(2)}s" begin="${(-i * dur / n).toFixed(2)}s" repeatCount="indefinite" path="${PAD[k]}"/>` : ""}</circle>`).join("");
     return `<path d="${PAD[k]}" fill="none" stroke="${KL[k]}" stroke-width="${sw.toFixed(1)}" opacity=".35" stroke-linecap="round"/>${beweeg ? bol : ""}`; };
@@ -4727,14 +4742,25 @@ function enStroomHtml(s, h) {
       <text class="en-lbl" x="${cx}" y="${boven ? cy - R - 18 : cy + R + 16}">${lbl}</text>${sub ? `<text class="en-sub" x="${cx}" y="${boven ? cy - R - 5 : cy + R + 30}">${sub}</text>` : ""}</g>`; };
   const netAf = (L.net || 0) >= 0, wagenSt = lp.laadt ? "laadt" : lp.verbonden ? "aangesloten" : "niet aangesloten";
   const pctZon = v.H + v.C > 30 ? Math.round((v.zh + v.zc) / (v.H + v.C) * 100) : null;
-  const svg = `<svg viewBox="0 -22 360 384" role="img" aria-label="Energiestroom nu: zon ${enKw(L.zon)} kW, ${netAf ? "afname" : "injectie"} ${enKw(L.net)} kW, huis ${enKw(L.huis)} kW, wagen ${enKw(L.wagen)} kW">
-    ${["zn", "zh", "nh", "zc", "nc"].map(lijn).join("")}
-    ${knoop("zon", "☀️", "Zon", enKw(L.zon) + " kW", zonVandaag != null ? `vandaag ${k1(zonVandaag)} kWh` : "", `<circle cx="${N.zon[0]}" cy="${N.zon[1]}" r="${R}" fill="none" stroke="var(--en-zon)" stroke-width="3"/>`)}
-    ${knoop("net", "⚡", (netAf ? "Afname" : "Injectie") + " · " + enCt(netAf ? L.prijs : L.injectie), enKw(L.net) + " kW", afname != null ? `↓${k1(afname)} ↑${k1(injectie)} kWh` : "", `<circle cx="${N.net[0]}" cy="${N.net[1]}" r="${R}" fill="none" stroke="var(--en-net)" stroke-width="3"/>`)}
+  const kWh = wh => k1(wh / 1000) + " kWh";
+  const zonRing = `<circle cx="${N.zon[0]}" cy="${N.zon[1]}" r="${R}" fill="none" stroke="var(--en-zon)" stroke-width="3"/>`, netRing = `<circle cx="${N.net[0]}" cy="${N.net[1]}" r="${R}" fill="none" stroke="var(--en-net)" stroke-width="3"/>`;
+  const knopen = dag ? `
+    ${knoop("zon", "☀️", "Zon", kWh(v.Z), "", zonRing)}
+    ${knoop("net", "⚡", "Net", "↓" + kWh(v.af), `↑${kWh(v.in)} injectie`, netRing)}
+    ${knoop("huis", "🏠", "Huis" + (v.H > 30 ? ` · ${Math.round(v.zh / v.H * 100)} % zon` : ""), kWh(v.H), "", ring(N.huis, v.zh, v.nh))}
+    ${knoop("wagen", "🚗", "Wagen" + (v.C > 30 ? ` · ${Math.round(v.zc / v.C * 100)} % zon` : ""), kWh(v.C), v.wagenVanaf && v.wagenVanaf > (h.net[0] || [0])[0] + 900 ? `apart gemeten vanaf ${enUur(v.wagenVanaf)}` : "", ring(N.wagen, v.zc, v.nc))}`
+  : `
+    ${knoop("zon", "☀️", "Zon", enKw(L.zon) + " kW", zonVandaag != null ? `vandaag ${k1(zonVandaag)} kWh` : "", zonRing)}
+    ${knoop("net", "⚡", (netAf ? "Afname" : "Injectie") + " · " + enCt(netAf ? L.prijs : L.injectie), enKw(L.net) + " kW", afname != null ? `↓${k1(afname)} ↑${k1(injectie)} kWh` : "", netRing)}
     ${knoop("huis", "🏠", "Huis" + (pctZon != null ? ` · ${pctZon} % zon` : ""), enKw(L.huis) + " kW", "", ring(N.huis, v.zh, v.nh))}
-    ${knoop("wagen", "🚗", "Wagen · " + wagenSt, enKw(L.wagen) + " kW", lp.verbonden && lp.sessieKwh ? `${lp.sessieKwh.toLocaleString("nl-BE")} kWh deze sessie` : "", ring(N.wagen, v.zc, v.nc), !lp.verbonden)}
+    ${knoop("wagen", "🚗", "Wagen · " + wagenSt, enKw(L.wagen) + " kW", lp.verbonden && lp.sessieKwh ? `${lp.sessieKwh.toLocaleString("nl-BE")} kWh deze sessie` : "", ring(N.wagen, v.zc, v.nc), !lp.verbonden)}`;
+  const label = dag ? `Energiestroom vandaag: zon ${kWh(v.Z)}, afname ${kWh(v.af)}, injectie ${kWh(v.in)}, huis ${kWh(v.H)}, wagen ${kWh(v.C)}`
+    : `Energiestroom nu: zon ${enKw(L.zon)} kW, ${netAf ? "afname" : "injectie"} ${enKw(L.net)} kW, huis ${enKw(L.huis)} kW, wagen ${enKw(L.wagen)} kW`;
+  const svg = `<svg viewBox="0 -22 360 384" role="img" aria-label="${label}">
+    ${["zn", "zh", "nh", "zc", "nc"].map(lijn).join("")}
+    ${knopen}
   </svg>`;
-  return svg + `<div class="en-leg" style="justify-content:center"><span><i style="background:var(--en-zon);height:4px"></i>van de zon</span><span><i style="background:var(--en-net);height:4px"></i>van het net</span><span>bolletjes lopen in de richting van de stroom</span></div>`;
+  return svg + `<div class="en-leg" style="justify-content:center"><span><i style="background:var(--en-zon);height:4px"></i>van de zon</span><span><i style="background:var(--en-net);height:4px"></i>van het net</span><span>${dag ? "sinds middernacht; dikte volgt de hoeveelheid" : "bolletjes lopen in de richting van de stroom"}</span></div>`;
 }
 
 /* Dagkaart: boven prijs per kwartier (staafjes), onder vermogen (zon gemeten + verwachting, net). Twee panelen, elk één as. */
@@ -4833,6 +4859,8 @@ function enKaartHover() {
 
 document.addEventListener("click", ev => {
   const dg = ev.target.closest("[data-endag]");
+  const sm = ev.target.closest("[data-enstroom]");
+  if (sm) { S.enStroom = sm.dataset.enstroom; viewEnergie(); return; }
   if (dg) { S.enDag = +dg.dataset.endag; if (S.en) S.en.gisterenFout = null; viewEnergie(); return; }
   const b = ev.target.closest("[data-enmodus],[data-envernieuw]"); if (!b) return;
   if ("envernieuw" in b.dataset) { run(async () => { await herlaadEnergie(true); if (S.tab === "energie") viewEnergie(); }); return; }

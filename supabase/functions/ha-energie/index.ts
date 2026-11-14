@@ -7,7 +7,7 @@
 // Deploy: supabase functions deploy ha-energie   (verify_jwt aan)
 //
 // Body: { actie: "status" }                       → live, prijzen, zonneverwachting, laadpunt
-//       { actie: "historiek", dag?: "gisteren" }  → net en zon per kwartier (HA-statistieken); gisteren ook de prijzen
+//       { actie: "historiek", dag?: "gisteren" }  → net, zon en wagen per kwartier (HA-statistieken); gisteren ook de prijzen
 //       { actie: "laadmodus", modus: "smart"|"now"|"off" }
 
 const CORS = {
@@ -23,6 +23,7 @@ const SB_URL = Deno.env.get("SUPABASE_URL")!;
 const SB_ANON = Deno.env.get("SUPABASE_ANON_KEY")!;
 const NET = "sensor.p1_meter_vermogen";                       // W, + = afname, − = injectie
 const ZON = "sensor.solis_inverter_0114_inverter_ac_power";   // W
+const WAGEN = "sensor.wagen_laadvermogen";                     // W, REST-sensor op evcc (sinds 14/11/2026)
 const MODI = ["off", "smart", "now"];
 
 async function rpc(auth: string, naam: string, args: Record<string, unknown> = {}) {
@@ -90,7 +91,7 @@ function middernacht(dagen: number) {
   lokaal.setHours(0, 0, 0, 0); lokaal.setDate(lokaal.getDate() + dagen);
   return new Date(Math.round((lokaal.getTime() + verschil) / 900000) * 900000);   // afronden: toLocaleString verliest de milliseconden
 }
-function historiek(dag: string): Promise<{ van: number; tot: number; net: [number, number][]; zon: [number, number][]; prijzen?: [number, number, number][] }> {
+function historiek(dag: string): Promise<{ van: number; tot: number; net: [number, number][]; zon: [number, number][]; wagen: [number, number][]; prijzen?: [number, number, number][] }> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(HA_URL.replace(/^http/, "ws") + "/api/websocket");
     const stop = setTimeout(() => { try { ws.close(); } catch { /* */ } reject(new Error("Home Assistant antwoordt niet")); }, 15000);
@@ -105,8 +106,8 @@ function historiek(dag: string): Promise<{ van: number; tot: number; net: [numbe
         for (const r of rijen) { const k = Math.floor(r.start / 900000) * 900; if (!b.has(k)) b.set(k, []); b.get(k)!.push(r.mean); }
         return [...b].map(([k, v]) => [k, Math.round(v.reduce((a, x) => a + x, 0) / v.length)] as [number, number]);
       };
-      const res: { van: number; tot: number; net: [number, number][]; zon: [number, number][]; prijzen?: [number, number, number][] } =
-        { van: start.getTime() / 1000, tot: (gisteren ? eind.getTime() : middernacht(1).getTime()) / 1000, net: perKwartier(uit.stat[NET]), zon: perKwartier(uit.stat[ZON]) };
+      const res: { van: number; tot: number; net: [number, number][]; zon: [number, number][]; wagen: [number, number][]; prijzen?: [number, number, number][] } =
+        { van: start.getTime() / 1000, tot: (gisteren ? eind.getTime() : middernacht(1).getTime()) / 1000, net: perKwartier(uit.stat[NET]), zon: perKwartier(uit.stat[ZON]), wagen: perKwartier(uit.stat[WAGEN]) };
       if (gisteren) {
         const w = (uit.prijs![FRANK] || []).map((x) => [x.lu, parseFloat(x.s)] as [number, number]).filter((x) => isFinite(x[1])).sort((a, b) => a[0] - b[0]);
         res.prijzen = [];
@@ -122,7 +123,7 @@ function historiek(dag: string): Promise<{ van: number; tot: number; net: [numbe
       if (m.type === "auth_required") ws.send(JSON.stringify({ type: "auth", access_token: HA_TOKEN }));
       else if (m.type === "auth_invalid") { clearTimeout(stop); ws.close(); reject(new Error("HA-token ongeldig")); }
       else if (m.type === "auth_ok") {
-        ws.send(JSON.stringify({ id: 1, type: "recorder/statistics_during_period", start_time: start.toISOString(), end_time: eind.toISOString(), statistic_ids: [NET, ZON], period: "5minute", types: ["mean"] }));
+        ws.send(JSON.stringify({ id: 1, type: "recorder/statistics_during_period", start_time: start.toISOString(), end_time: eind.toISOString(), statistic_ids: [NET, ZON, WAGEN], period: "5minute", types: ["mean"] }));
         if (gisteren) ws.send(JSON.stringify({ id: 2, type: "history/history_during_period", start_time: new Date(start.getTime() - 3600e3).toISOString(), end_time: eind.toISOString(), entity_ids: [FRANK], minimal_response: true, no_attributes: true }));
       } else if (m.id === 1 || m.id === 2) {
         if (!m.success) { clearTimeout(stop); ws.close(); return reject(new Error("Historiek niet beschikbaar")); }
