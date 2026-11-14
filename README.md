@@ -54,5 +54,19 @@ Geen persoonlijke data in deze publieke repo: geen recepten, producten, tickets 
       method: post
       timeout: 10
   ```
+- **Wagen apart:** REST-sensor `sensor.wagen_laadvermogen` (W, uit evcc `/api/state`, elke 30 s) in `configuration.yaml`:
+  ```yaml
+  rest:
+    - resource: "http://127.0.0.1:7070/api/state"
+      scan_interval: 30
+      sensor:
+        - name: "Wagen laadvermogen"
+          unique_id: kring_wagen_laadvermogen
+          value_template: "{{ ((value_json.result | default(value_json)).loadpoints[0].chargePower | float(0)) | round(0) }}"
+          unit_of_measurement: "W"
+          device_class: power
+          state_class: measurement
+  ```
+  Plus de helper *Wagen laadenergie* (integraal, kWh) voor het energiedashboard van HA. Gemeten vanaf 14/11/2026.
 - **Toegang:** lezen voor elk lid van het gezin in `gezin.energie_koppeling`; de laadmodus wijzigen enkel voor beheerder en lid. Elke wijziging staat in `gezin.energie_log`.
 - **Advies per toestel:** programmaprofielen gemeten met de meetstekkers (4–14/11/2026), kwartierprijzen en injectie uit evcc (Frank), zonneverwachting uit evcc. Rekenregels in `KringEnergie` (index.html).
