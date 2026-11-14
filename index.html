@@ -276,6 +276,7 @@ details.voorraad[open] summary h3::after{content:"verbergen"}
 .vk-groot{font-family:var(--font-display);font-weight:700;font-size:1.2rem;border:0;background:none;padding:0;text-align:left;margin:0}
 .vk .getal{font-family:var(--font-display);font-size:1.5rem;font-weight:700;font-variant-numeric:tabular-nums}
 .neg,.neg-tekst{color:var(--danger)}
+.ag-dag.ag-oud .dagkop .datum{color:var(--danger)}
 .vlijst{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
 .vlijst li{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--line);font-size:.92rem}
 .vlijst li:last-child{border-bottom:0}
@@ -1109,6 +1110,8 @@ function itemRij(it, dagStr, kort) {
 }
 
 /* ---------- Scherm ---------- */
+/* Eerste dag van de agenda-weekweergave: vandaag + S.agOffset dagen (veelvoud van 7) */
+const agVan = () => AG.plus(AG.iso(new Date()), S.agOffset || 0);
 function viewAgenda() {
   const vandaag = AG.iso(new Date());
   const chips = [...S.kalenders, ...SYS].map(k => `<button class="chip ag-chip" data-kal="${k.id}" aria-pressed="${zichtbaar(k.id)}" style="--k:${k.kleur}"><span class="dot"></span>${esc(k.naam)}</button>`).join("");
@@ -1124,8 +1127,12 @@ function viewAgenda() {
     return open.map(d => ({ ...t, voorkomen: d }));
   });
   const verj = S.verjaardagen.map(v => ({ v, n: AG.volgendeVerjaardag(v, vandaag) })).filter(x => x.n.dagen <= 14).sort((a, b) => a.n.dagen - b.n.dagen);
-  const aandacht = (telaat.length || verj.length) ? `<div class="ag-aandacht">
-      ${telaat.map(t => `<div class="ag-item ag-taak telaat" style="--k:var(--danger)"><input type="checkbox" class="ag-vink" data-taak="${t.id}|${t.voorkomen}" aria-label="Taak afvinken"><button class="ag-knop" data-item="taak|${t.id}|${t.voorkomen}"><span class="ag-tijd">te laat</span><span class="ag-titel">${esc(t.titel)}</span><span class="ag-meta">${AG.dag(t.voorkomen).getDate()} ${MND[AG.dag(t.voorkomen).getMonth()]}${t.lid_id && lid(t.lid_id) ? " · " + esc(lid(t.lid_id).naam) : ""}</span></button></div>`).join("")}
+  const telaatRij = (t, metDatum) => `<div class="ag-item ag-taak telaat" style="--k:var(--danger)"><input type="checkbox" class="ag-vink" data-taak="${t.id}|${t.voorkomen}" aria-label="Taak afvinken"><button class="ag-knop" data-item="taak|${t.id}|${t.voorkomen}"><span class="ag-tijd">te laat</span><span class="ag-titel">${esc(t.titel)}</span><span class="ag-meta">${metDatum ? `${AG.dag(t.voorkomen).getDate()} ${MND[AG.dag(t.voorkomen).getMonth()]}` : ""}${t.lid_id && lid(t.lid_id) ? (metDatum ? " · " : "") + esc(lid(t.lid_id).naam) : ""}</span></button>${typeof duimHtml === "function" && isKindLid(t.lid_id) ? duimHtml(t.id, t.voorkomen) : ""}</div>`;
+  // Weekweergave vanaf vandaag: open taken van vroeger staan dan in hun eigen dag bovenaan, niet in het aandachtsblok
+  const rollend = S.agendaView !== "maand" && !(S.agOffset || 0);
+  const tlBlok = rollend ? [] : telaat;
+  const aandacht = (tlBlok.length || verj.length) ? `<div class="ag-aandacht">
+      ${tlBlok.map(t => telaatRij(t, true)).join("")}
       ${verj.map(({ v, n }) => `<div class="ag-item ag-verjaardag" style="--k:${kalender("sys-verj").kleur}"><button class="ag-knop" data-item="verjaardag|${v.id}|${n.datum}"><span class="ag-tijd">${n.dagen === 0 ? "vandaag" : n.dagen === 1 ? "morgen" : "over " + n.dagen + " d."}</span><span class="ag-titel">${esc(n.leeftijd ? `${v.naam} wordt ${n.leeftijd}` : `Verjaardag ${v.naam}`)}</span></button></div>`).join("")}
     </div>` : "";
   let body;
@@ -1145,11 +1152,17 @@ function viewAgenda() {
     }
     body = `<div class="maand"><div class="mkop">${KORT.map(k => `<span>${k}</span>`).join("")}</div><div class="mgrid">${cellen.join("")}</div></div>`;
   } else {
-    const van = AG.iso(S.week), tot = AG.plus(van, 6), per = agendaItems(van, tot);
-    body = `<div class="dagen">${[0, 1, 2, 3, 4, 5, 6].map(i => {
+    // 7 dagen vanaf vandaag (met ‹ › telkens 7 dagen verder); vóór vandaag enkel de dagen met nog open taken
+    const van = agVan(), tot = AG.plus(van, 6), per = agendaItems(van, tot);
+    const vroeger = rollend ? [...new Set(telaat.map(t => t.voorkomen))].sort() : [];
+    const dagNaam = d => DAGEN[AG.weekdag(d) - 1];
+    const oud = vroeger.map(d => `<section class="dag ag-dag ag-oud">
+        <div class="dagkop"><span class="dagnaam">${dagNaam(d)}</span><span class="datum">${AG.dag(d).getDate()} ${MND[AG.dag(d).getMonth()]} · nog open</span></div>
+        <div class="ag-lijst">${telaat.filter(t => t.voorkomen === d).map(t => telaatRij(t, false)).join("")}</div></section>`).join("");
+    body = `<div class="dagen">${oud}${[0, 1, 2, 3, 4, 5, 6].map(i => {
       const d = AG.plus(van, i), it = per[d] || [];
       return `<section class="dag ag-dag ${d === vandaag ? "is-vandaag" : ""}">
-        <div class="dagkop"><span class="dagnaam">${DAGEN[i]}</span><span class="datum">${AG.dag(d).getDate()} ${MND[AG.dag(d).getMonth()]}</span><button class="ag-plus" data-nieuwop="${d}" aria-label="Nieuw op ${DAGEN[i]}">+</button></div>
+        <div class="dagkop"><span class="dagnaam">${d === vandaag ? "Vandaag" : d === AG.plus(vandaag, 1) ? "Morgen" : dagNaam(d)}</span><span class="datum">${d === vandaag || d === AG.plus(vandaag, 1) ? dagNaam(d).toLowerCase() + " " : ""}${AG.dag(d).getDate()} ${MND[AG.dag(d).getMonth()]}</span><button class="ag-plus" data-nieuwop="${d}" aria-label="Nieuw op ${dagNaam(d)}">+</button></div>
         <div class="ag-lijst">${it.length ? it.map(x => itemRij(x, d)).join("") : `<button class="ag-leeg" data-nieuwop="${d}">Niets gepland</button>`}</div></section>`;
     }).join("")}</div>`;
   }
@@ -5350,8 +5363,9 @@ const pwLabel = () => `${vsDagLabel(iso(S.pweek))} – ${vsDagLabel(iso(plus(S.p
 /* Menu laden over de agendaweek (ma–zo), de planweek (bv. vr–do) en vandaag; extra's en vinkjes horen bij de planweek */
 async function herlaadWeek(){
   if (!S.pweek) S.pweek = pwStandaard();
-  const d = [iso(S.week), iso(plus(S.week, 6)), iso(S.pweek), iso(plus(S.pweek, 6)), iso(new Date())].sort();
-  const w = await db.loadWeek(d[0], d[4], iso(S.pweek)); S.menu = w.menu; S.extra = w.extra; S.checks = w.checks;
+  const a = agVan();
+  const d = [iso(S.week), iso(plus(S.week, 6)), iso(S.pweek), iso(plus(S.pweek, 6)), iso(new Date()), a, AG.plus(a, 6)].sort();
+  const w = await db.loadWeek(d[0], d[d.length - 1], iso(S.pweek)); S.menu = w.menu; S.extra = w.extra; S.checks = w.checks;
 }
 async function herlaadProducten(){ const p = await db.loadProducten(); S.producten = p.producten; S.koppeling = p.koppeling; S.prodIdx = new Map(S.producten.map(x => [String(x.id), x])); }
 async function herlaadAgenda(){ const a = await db.loadAgenda(); Object.assign(S, a); if (db.mijnLid) S.ik = db.mijnLid; else if (!S.leden.some(l => l.id === S.ik)) S.ik = (S.leden[0] || {}).id || null; }
@@ -5407,7 +5421,9 @@ function render(){
   $("#weeknav").hidden = ["gerechten", "vandaag", "lijsten", "diepvries", "energie"].includes(S.tab) || (S.tab === "budget" && S.budgetView === "rekeningen");
   document.body.classList.toggle("breed", window.innerWidth >= 1000 && (S.tab === "menu" || S.tab === "budget" || S.tab === "vandaag" || S.tab === "diepvries" || S.tab === "energie" || (S.tab === "agenda" && S.agendaView === "maand")));
   const z = plus(S.week, 6);
+  const agA = S.tab === "agenda" ? AG.dag(agVan()) : null, agZ = agA ? plus(agA, 6) : null;
   $("#w-lbl").innerHTML = (S.tab === "menu" || S.tab === "lijst") && S.pweek ? `<b>${pwLabel()}</b>` : S.tab === "budget" && S.bmaand ? `<b>${MAANDNAAM(S.bmaand)}</b>` : S.tab === "agenda" && S.agendaView === "maand" ? `<b>${MAANDEN[S.maand.getMonth()]} ${S.maand.getFullYear()}</b>`
+    : S.tab === "agenda" ? `<b>${S.agOffset ? `${agA.getDate()} ${MND[agA.getMonth()]}` : "Vandaag"}</b> – ${agZ.getDate()} ${MND[agZ.getMonth()]}`
     : `<b>Week ${weeknr(S.week)}</b> · ${S.week.getDate()} ${MND[S.week.getMonth()]} – ${z.getDate()} ${MND[z.getMonth()]}`;
   $("#modus").textContent = db && db.label ? db.label : "";
   ({vandaag: viewVandaag, agenda: viewAgenda, menu: viewMenu, gerechten: viewGerechten, lijst: viewLijst, lijsten: viewLijsten, budget: viewBudget, diepvries: viewDiepvries, energie: viewEnergie})[S.tab]();
@@ -5863,11 +5879,14 @@ document.addEventListener("click", e => {
     S.maand = t.id === "w-nu" ? new Date() : new Date(S.maand.getFullYear(), S.maand.getMonth() + (t.id === "w-prev" ? -1 : 1), 1); render(); }
   else if ((t.id === "w-prev" || t.id === "w-next" || t.id === "w-nu") && (S.tab === "menu" || S.tab === "lijst")) run(async () => {
     S.pweek = t.id === "w-nu" ? pwStandaard() : plus(S.pweek, t.id === "w-prev" ? -7 : 7); await herlaadWeek(); render(); });
+  else if ((t.id === "w-prev" || t.id === "w-next" || t.id === "w-nu") && S.tab === "agenda") run(async () => {
+    S.agOffset = t.id === "w-nu" ? 0 : (S.agOffset || 0) + (t.id === "w-prev" ? -7 : 7);
+    S.week = maandag(AG.dag(agVan())); S.maand = new Date(AG.dag(agVan())); await herlaadWeek(); render(); });
   else if (t.id === "w-prev" || t.id === "w-next" || t.id === "w-nu") run(async () => {
     S.week = t.id === "w-nu" ? maandag(new Date()) : plus(S.week, t.id === "w-prev" ? -7 : 7); S.maand = new Date(S.week); await herlaadWeek(); render(); });
   else if (t.dataset.agview){ S.agendaView = t.dataset.agview; pref.set("agendaView", S.agendaView); if (S.agendaView === "maand") S.maand = new Date(S.week); render(); }
   else if (t.dataset.kal){ const k = t.dataset.kal; S.verborgen = S.verborgen.includes(k) ? S.verborgen.filter(x => x !== k) : [...S.verborgen, k]; pref.set("verborgen", S.verborgen); render(); }
-  else if ("nieuwitem" in t.dataset) openNieuwKeuze(iso(new Date()) >= iso(S.week) && iso(new Date()) <= iso(plus(S.week, 6)) ? iso(new Date()) : iso(S.week));
+  else if ("nieuwitem" in t.dataset) openNieuwKeuze(S.tab === "agenda" && S.agendaView !== "maand" ? (S.agOffset ? agVan() : iso(new Date())) : iso(new Date()) >= iso(S.week) && iso(new Date()) <= iso(plus(S.week, 6)) ? iso(new Date()) : iso(S.week));
   else if (t.dataset.nieuwop) openNieuwKeuze(t.dataset.nieuwop);
   else if (t.dataset.dag) openDag(t.dataset.dag);
   else if (t.dataset.item) openItem(t.dataset.item);
