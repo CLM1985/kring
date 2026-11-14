@@ -1103,8 +1103,9 @@ function itemRij(it, dagStr, kort) {
     : it.soort === "lijstitem" ? `<input type="checkbox" class="ag-vink" data-litem="${it.id}" ${it.klaar ? "checked" : ""} aria-label="Afvinken">`
     : it.soort === "afval" ? `<input type="checkbox" class="ag-vink" data-afval="${esc(it.id)}" ${it.klaar ? "checked" : ""} aria-label="${esc(it.titel)} buitengezet">` : "";
   const label = it.soort === "maaltijd" ? `<span class="tag">avond</span> ` : it.soort === "school" || it.soort === "feest" ? "" : "";
+  const duim = it.soort === "taak" && typeof duimHtml === "function" && (it.wie || []).some(w => isKindLid(w.id)) ? duimHtml(it.id, it.voorkomen) : "";
   return `<div class="${cls}" style="--k:${it.kleur}">${vink}<button class="ag-knop" ${klik} ${klik ? "" : "disabled"}>
-    ${it.tijd ? `<span class="ag-tijd">${esc(it.tijd)}</span>` : ""}<span class="ag-titel">${label}${esc(it.titel)}</span>${!kort && meta ? `<span class="ag-meta">${esc(meta)}</span>` : ""}</button></div>`;
+    ${it.tijd ? `<span class="ag-tijd">${esc(it.tijd)}</span>` : ""}<span class="ag-titel">${label}${esc(it.titel)}</span>${!kort && meta ? `<span class="ag-meta">${esc(meta)}</span>` : ""}</button>${duim}</div>`;
 }
 
 /* ---------- Scherm ---------- */
@@ -4075,15 +4076,29 @@ function ovTerugblik() {
   return `<p class="muted">Afgelopen dagen (${r5DagKort(van)} – ${r5DagKort(tot)}).</p>
     <section class="ov-sectie"><h3>Wat lukte</h3>
       ${tb.gedaan.length ? `<p class="ov-feest">🎉 ${tb.gedaan.length} ${tb.gedaan.length === 1 ? "taak" : "taken"} gedaan${Object.keys(perLid).length ? " · " + Object.entries(perLid).map(([n, k]) => `${esc(n)} ${k}`).join(" · ") : ""}</p>
-        <ul class="vlijst">${tb.gedaan.slice(-8).reverse().map(x => `<li><span>✓ ${esc(x.titel)}</span><span class="muted">${esc(wieTekst(x.lid_id))} · ${r5DagKort(x.datum)}</span></li>`).join("")}</ul>`
+        <ul class="vlijst">${tb.gedaan.slice(-8).reverse().map(x => `<li style="align-items:center"><span>✓ ${esc(x.titel)}</span><span class="muted" style="display:flex;align-items:center;gap:8px">${esc(wieTekst(x.lid_id))} · ${r5DagKort(x.datum)}${duimHtml(x.id, x.datum)}</span></li>`).join("")}</ul>`
         : `<p class="muted">Nog niets afgevinkt deze week.</p>`}
     </section>
     <section class="ov-sectie"><h3>Bleef liggen${tb.open.length ? ` (${tb.open.length})` : ""}</h3>
       ${tb.open.length ? `<div class="ov-open">${tb.open.map(x => `<div class="ov-rij"><span><b>${esc(x.titel)}</b><small>${esc(wieTekst(x.lid_id))} · ${r5DagKort(x.datum)}${x.herh ? " · herhalend" : ""}</small></span>
-          <span class="ov-knoppen">${x.herh ? "" : `<button class="knop sec klein" data-ovnaar="${x.id}">Naar ${r5DagKort(S.vsStart)}</button>`}<button class="knop sec klein" data-ovval="${x.id}|${x.datum}">Laat vallen</button></span></div>`).join("")}</div>`
+          <span class="ov-knoppen">${duimHtml(x.id, x.datum)}${x.herh ? "" : `<button class="knop sec klein" data-ovnaar="${x.id}">Naar ${r5DagKort(S.vsStart)}</button>`}<button class="knop sec klein" data-ovval="${x.id}|${x.datum}">Laat vallen</button></span></div>`).join("")}</div>`
         : `<p>Niets bleef liggen. 👏</p>`}
       ${sv.verplaatst || sv.gevallen ? `<p class="muted" style="font-size:.85rem">${sv.verplaatst ? `${sv.verplaatst} verplaatst` : ""}${sv.verplaatst && sv.gevallen ? " · " : ""}${sv.gevallen ? `${sv.gevallen} losgelaten` : ""}</p>` : ""}
-    </section>`;
+    </section>${ovDuimenKinderen(tb)}`;
+}
+
+/* Enkel voor ouders: alle taken van de kinderen van de afgelopen dagen, met duimpjes en een telling per kind */
+function ovDuimenKinderen(tb) {
+  if (!isOuder()) return "";
+  const kids = S.leden.filter(l => isKindLid(l.id)); if (!kids.length) return "";
+  const alle = [...tb.gedaan, ...tb.open].sort((a, b) => a.datum.localeCompare(b.datum) || a.titel.localeCompare(b.titel, "nl"));
+  const blok = kids.map(k => {
+    const it = alle.filter(x => x.lid_id === k.id); if (!it.length) return "";
+    const t = duimTelling(it);
+    return `<div class="ov-kindkop"><b>${esc(k.naam)}</b><span class="muted">${it.filter(x => x.klaar).length}/${it.length} gedaan · 👍 ${t.op} · 👎 ${t.neer}</span></div>
+      <ul class="ov-duimen">${it.map(x => `<li><span class="wat">${x.klaar ? "✓" : "✗"} ${esc(x.titel)}<small>${r5DagKort(x.datum)}${x.klaar ? "" : " · niet afgevinkt"}</small></span>${duimHtml(x.id, x.datum)}</li>`).join("")}</ul>`;
+  }).join("");
+  return blok ? `<section class="ov-sectie"><h3>Duimpjes voor de kinderen</h3><p class="muted" style="font-size:.85rem;margin-top:0">Alleen ouders zien dit. Tik nog eens op een duim om hem weg te halen.</p>${blok}</section>` : "";
 }
 
 function ovKomend() {
@@ -4142,7 +4157,8 @@ function ovEten() {
 
 function ovAfspraken() {
   const ov = S.r5.ov, sv = ov.samenvatting, tb = R5L.terugblik(AG, S.taken, VS.plus(S.vsStart, -7), AG.plus(AG.iso(new Date()), -1));
-  const punten = [`${tb.gedaan.length} taken gedaan vorige week`, sv.verplaatst && `${sv.verplaatst} verplaatst`, sv.gevallen && `${sv.gevallen} losgelaten`,
+  const kidsDuim = isOuder() ? S.leden.filter(l => isKindLid(l.id)).map(k => { const it = [...tb.gedaan, ...tb.open].filter(x => x.lid_id === k.id), t = duimTelling(it); return t.op || t.neer ? `${k.naam}: 👍 ${t.op} · 👎 ${t.neer}` : ""; }).filter(Boolean) : [];
+  const punten = [`${tb.gedaan.length} taken gedaan vorige week`, ...kidsDuim, sv.verplaatst && `${sv.verplaatst} verplaatst`, sv.gevallen && `${sv.gevallen} losgelaten`,
     sv.toegewezen && `${sv.toegewezen} keer verdeeld`, S.vs && S.vs.status === "overgenomen" && "weekmenu overgenomen"].filter(Boolean);
   return `<section class="ov-sectie"><h3>Wat spraken we af?</h3>
       <textarea class="in" id="ov-notities" placeholder="bv. Ouder B regelt de verjaardag van oma; Ouder A belt de garage; zaterdag samen de garage opruimen" ${ov.afgerond ? "readonly" : ""}>${esc(ov.notities || "")}</textarea>
@@ -4878,6 +4894,73 @@ setInterval(() => {
   herlaadEnergie(false).then(() => { if (S.tab === "energie" && !document.querySelector(".en-meer[open]")) viewEnergie(); });
 }, 30000);
 </script>
+<style>
+/* Duimpjes (enkel ouders): klein naast een taak, groter in de Eilandraad */
+.duim{display:inline-flex;gap:2px;flex:none;margin-right:6px}
+.duim button{border:1px solid var(--line);background:var(--surface);border-radius:99px;width:32px;height:28px;font-size:.95rem;line-height:1;padding:0;opacity:.55;filter:grayscale(1)}
+.duim button[aria-pressed="true"]{opacity:1;filter:none;border-color:var(--primary);background:var(--drop)}
+.duim button:hover{opacity:.9}
+.ov-duimen{list-style:none;margin:0;padding:0}
+.ov-duimen li{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line)}
+.ov-duimen li:last-child{border-bottom:0}
+.ov-duimen .wat{min-width:0}
+.ov-duimen .wat small{display:block;color:var(--muted)}
+.ov-kindkop{display:flex;justify-content:space-between;align-items:baseline;margin:12px 0 2px}
+.ov-kindkop .muted{font-size:.88rem}
+</style>
+<script>/* Kring – duimpje omhoog/omlaag per taak (voorkomen), enkel voor ouders (beheerder en lid).
+   Tieners en kinderen zien niets: de database weigert het (RLS op gezin.taak_duim) en in kindmodus wordt niets getoond. */
+"use strict";
+window.DUIM_LOCAL = {
+  async loadDuimen() { return Object.entries(this.d.duim || {}).map(([k, v]) => { const [taak_id, datum] = k.split("|"); return { taak_id, datum, duim: v }; }); },
+  async zetDuim(taak, datum, duim) { const d = this.d.duim = this.d.duim || {}; if (duim) d[taak + "|" + datum] = duim; else delete d[taak + "|" + datum]; this.save(); }
+};
+window.DUIM_SUPA = {
+  async loadDuimen() {
+    const r = await this.g.from("taak_duim").select("taak_id, datum, duim").eq("huishouden_id", this.h).gte("datum", AG.plus(AG.iso(new Date()), -60));
+    if (r.error) { console.warn("duimen:", r.error.message); return []; }
+    return r.data || [];
+  },
+  async zetDuim(taak, datum, duim) {
+    if (!duim) return this.ok(await this.g.from("taak_duim").delete().eq("taak_id", taak).eq("datum", datum));
+    const uid = this.session && this.session.user && this.session.user.id;
+    this.ok(await this.g.from("taak_duim").upsert({ taak_id: taak, datum, huishouden_id: this.h, duim, door: uid, op: new Date().toISOString() }, { onConflict: "taak_id,datum" }));
+  }
+};
+
+const isOuder = () => { const me = lid(S.ik); return !!me && ["beheerder", "lid"].includes(me.rol || "lid") && !(S.r5 && S.r5.km && S.r5.km.aan); };
+const isKindLid = id => { const l = id && lid(id); return !!l && ["kind", "tiener"].includes(l.rol); };
+const duimVan = (taak, datum) => (S.duim && S.duim.get(taak + "|" + datum)) || 0;
+async function herlaadDuimen() {
+  if (!isOuder()) { S.duim = new Map(); return; }
+  try { S.duim = new Map((await db.loadDuimen()).map(r => [r.taak_id + "|" + r.datum, r.duim])); } catch (e) { console.error(e); S.duim = new Map(); }
+}
+/* Twee knopjes; nog eens op dezelfde duim tikken haalt hem weg */
+function duimHtml(taak, datum) {
+  if (!isOuder() || !datum || datum > AG.iso(new Date())) return "";
+  const v = duimVan(taak, datum);
+  return `<span class="duim" role="group" aria-label="Beoordeling">
+    <button type="button" data-duim="${taak}|${datum}|1" aria-pressed="${v === 1}" aria-label="Duimpje omhoog" title="Duimpje omhoog">👍</button>
+    <button type="button" data-duim="${taak}|${datum}|-1" aria-pressed="${v === -1}" aria-label="Duimpje omlaag" title="Duimpje omlaag">👎</button></span>`;
+}
+function duimTelling(items) {
+  let op = 0, neer = 0; for (const x of items) { const v = duimVan(x.id, x.datum); if (v > 0) op++; else if (v < 0) neer++; }
+  return { op, neer };
+}
+document.addEventListener("click", ev => {
+  const b = ev.target.closest("[data-duim]"); if (!b) return;
+  ev.preventDefault(); ev.stopPropagation();
+  if (!isOuder()) return;
+  const [taak, datum, w] = b.dataset.duim.split("|"), nieuw = duimVan(taak, datum) === +w ? 0 : +w;
+  S.duim = S.duim || new Map(); if (nieuw) S.duim.set(taak + "|" + datum, nieuw); else S.duim.delete(taak + "|" + datum);
+  const grp = b.closest(".duim"); if (grp) grp.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", String(+x.dataset.duim.split("|")[2] === nieuw)));
+  run(async () => {
+    try { await db.zetDuim(taak, datum, nieuw || null); }
+    catch (e) { await herlaadDuimen(); throw e; }
+    finally { if ($("#paneel") && $("#paneel").querySelector(".ov-stappen") && !$("#sheet").hidden) openOverleg(); }
+  });
+}, true);
+</script>
 
 <script>
 "use strict";
@@ -5205,6 +5288,8 @@ Object.assign(LocalStore.prototype, window.AF_LOCAL);
 Object.assign(SupaStore.prototype, window.AF_SUPA);
 Object.assign(LocalStore.prototype, window.EN_LOCAL);
 Object.assign(SupaStore.prototype, window.EN_SUPA);
+Object.assign(LocalStore.prototype, window.DUIM_LOCAL);
+Object.assign(SupaStore.prototype, window.DUIM_SUPA);
 
 /* ================= Toestand ================= */
 const S = { tab: "vandaag", budgetView: pref.get("budgetView", "plan"), bperiode: (pref.get("bverdeling", {}) || {}).p || "jaar", bper: (pref.get("bverdeling", {}) || {}).w || "groep", bmaand: null, bfilter: "alle", bcat: null, brek: null, bzoek: "", budget: null,
@@ -5231,7 +5316,7 @@ async function herlaadProducten(){ const p = await db.loadProducten(); S.product
 async function herlaadAgenda(){ const a = await db.loadAgenda(); Object.assign(S, a); if (db.mijnLid) S.ik = db.mijnLid; else if (!S.leden.some(l => l.id === S.ik)) S.ik = (S.leden[0] || {}).id || null; }
 async function herlaadGezin(){ const g = await db.loadGezin(); S.lijsten = g.lijsten; S.activiteit = g.activiteit; }
 async function herlaadBudget(){ if (!zietBudget()) { S.budget = null; S.budgetGeladen = true; return; } try { BE.status = "test"; S.budget = await db.loadBudget(); if (S.budget && !S.bmaand) S.bmaand = S.budget.huidig; } catch(e){ console.error(e); S.budget = null; } S.budgetGeladen = true; }
-async function herlaadAlles(){ S.gerechten = await db.loadGerechten(); await herlaadVoorstel(); await Promise.all([herlaadWeek(), herlaadProducten(), herlaadAgenda(), herlaadGezin(), herlaadBudget(), herlaadDiepvries(), herlaadVoorraad(), herlaadAfval()]); await herlaadR5(); }
+async function herlaadAlles(){ S.gerechten = await db.loadGerechten(); await herlaadVoorstel(); await Promise.all([herlaadWeek(), herlaadProducten(), herlaadAgenda(), herlaadGezin(), herlaadBudget(), herlaadDiepvries(), herlaadVoorraad(), herlaadAfval()]); await herlaadR5(); await herlaadDuimen(); }
 const gerecht = id => S.gerechten.find(g => g.id === id);
 const slot = (d, m) => S.menu.find(x => x.datum === d && x.moment === m);
 const product = id => id == null ? null : S.prodIdx.get(String(id));
