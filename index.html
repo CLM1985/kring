@@ -4703,7 +4703,12 @@ function enKaartHtml(s, h, adv) {
   const vMax = Math.max(1, ...alle), vMin = Math.min(0, ...alle);
   const vTop = pTop + pH + 34, vH = 130, yv = v => vTop + vH - (v - vMin) / (vMax - vMin) * vH;
   const H = vTop + vH + 22;
-  const prZ = pr.filter(p => p[0] >= t0 && p[0] < t1);
+  // Smalle kaart (gsm, of vandaag + morgen): prijs als uurgemiddelde, anders per kwartier
+  const perUur = iw / ((t1 - t0) / KW) < 6;
+  const uurGem = pts => { const m = new Map(); for (const [a, , v] of pts) { const u = Math.floor(a / 3600) * 3600; if (!m.has(u)) m.set(u, []); m.get(u).push(v); }
+    return [...m].map(([u, v]) => [u, u + 3600, v.reduce((x, y) => x + y, 0) / v.length]); };
+  const prU = uurGem(pr);
+  const prZ = (perUur ? prU : pr).filter(p => p[0] >= t0 && p[0] < t1);
   const trap = pts => pts.map((p, i) => `${i ? "L" : "M"}${x(p[0]).toFixed(1)},${yp(p[2]).toFixed(1)}L${x(p[1]).toFixed(1)},${yp(p[2]).toFixed(1)}`).join("");
   const voorbij = prZ.filter(p => p[0] < nu), komend = prZ.filter(p => p[1] > nu);
   const pad = (pts, close) => { if (!pts.length) return ""; let dd = `M${x(pts[0][0]).toFixed(1)},${yv(pts[0][1] / 1000).toFixed(1)}`; for (const [t, w] of pts) dd += `L${x(t).toFixed(1)},${yv(w / 1000).toFixed(1)}L${x(t + KW).toFixed(1)},${yv(w / 1000).toFixed(1)}`; return close ? dd + `L${x(pts[pts.length - 1][0] + KW).toFixed(1)},${yv(0)}L${x(pts[0][0]).toFixed(1)},${yv(0)}Z` : dd; };
@@ -4714,7 +4719,7 @@ function enKaartHtml(s, h, adv) {
   // Adviesbanden (enkel de eerste twee toestellen met een ander moment dan nu, om het leesbaar te houden)
   const banden = (adv || []).filter(a => a.best && a.best.start > nu + 60).slice(0, 3);
   const svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Kwartierprijzen en vermogen vandaag">
-    <text class="en-as" x="${P.l}" y="11">Prijs (ct/kWh)</text>
+    <text class="en-as" x="${P.l}" y="11">Prijs (ct/kWh${perUur ? ", uurgemiddelde" : ""})</text>
     ${pTicks.map(v => `<line class="en-grid-l" x1="${P.l}" x2="${W - P.r}" y1="${yp(v)}" y2="${yp(v)}"/><text class="en-as" x="${P.l - 5}" y="${yp(v) + 4}" text-anchor="end">${(v * 100).toLocaleString("nl-BE", { maximumFractionDigits: 1 })}</text>`).join("")}
     ${banden.map((a, i) => `<rect class="en-band" x="${x(a.best.start)}" y="${vTop}" width="${Math.max(2, x(a.best.eind) - x(a.best.start))}" height="${vH}" opacity=".8"/><text class="en-band-t" x="${x(a.best.start) + 3}" y="${vTop + 12 + i * 13}">${a.toestel.ico}</text>`).join("")}
     ${komend.length ? `<path d="${trap(komend)}L${x(komend[komend.length - 1][1])},${pTop + pH}L${x(komend[0][0])},${pTop + pH}Z" fill="var(--en-prijs)" opacity=".12"/>` : ""}
@@ -4729,13 +4734,13 @@ function enKaartHtml(s, h, adv) {
     <line id="en-kruis" stroke="var(--muted)" stroke-width="1" visibility="hidden" y1="${pTop}" y2="${vTop + vH}" x1="-10" x2="-10"/>
     <rect id="en-vang" x="${P.l}" y="0" width="${iw}" height="${H}" fill="transparent"/>
   </svg>`;
-  enKaartHtml.ctx = { t0, t1, P, iw, W, pr, zonH, netH, zonF, KW };
-  const rij = t => { const p = pr.find(q => q[0] === t), z = (zonH.find(q => q[0] === t) || zonF.find(q => q[0] === t) || [])[1], n = (netH.find(q => q[0] === t) || [])[1];
+  enKaartHtml.ctx = { t0, t1, P, iw, W, pr: perUur ? prU : pr, perUur, zonH, netH, zonF, KW };
+  const rij = t => { const p = prU.find(q => q[0] === t), z = (zonH.find(q => q[0] === t) || zonF.find(q => q[0] === t) || [])[1], n = (netH.find(q => q[0] === t) || [])[1];
     return `<tr><td>${enDag(t)}${enUur(t)}</td><td>${p ? enCt(p[2]) : ""}</td><td>${z != null ? enKw(z) : ""}</td><td>${n != null ? (n < 0 ? "−" : "") + enKw(n) : ""}</td></tr>`; };
   const tabel = []; for (let t = t0; t < t1; t += 3600) tabel.push(rij(t));
   return `<div class="en-kaart">${svg}<div class="en-tip" id="en-tip" hidden></div></div>
-    <div class="en-leg"><span><i style="background:var(--en-prijs);height:3px"></i>Prijs per kwartier</span><span><i style="background:var(--en-zon);opacity:.6"></i>Zon gemeten</span><span><i style="border:2px dashed var(--en-zon);height:6px"></i>Zon verwacht</span><span><i style="background:var(--en-net);height:3px"></i>Net (+ afname, − injectie)</span>${banden.length ? `<span><i style="background:var(--accent-soft)"></i>Advies</span>` : ""}</div>
-    <details class="en-meer"><summary>Tabel per uur</summary><table class="en-tabel"><thead><tr><th>Uur</th><th>Prijs</th><th>Zon kW</th><th>Net kW</th></tr></thead><tbody>${tabel.join("")}</tbody></table></details>`;
+    <div class="en-leg"><span><i style="background:var(--en-prijs);height:3px"></i>Prijs per ${perUur ? "uur (gemiddeld)" : "kwartier"}</span><span><i style="background:var(--en-zon);opacity:.6"></i>Zon gemeten</span><span><i style="border:2px dashed var(--en-zon);height:6px"></i>Zon verwacht</span><span><i style="background:var(--en-net);height:3px"></i>Net (+ afname, − injectie)</span>${banden.length ? `<span><i style="background:var(--accent-soft)"></i>Advies</span>` : ""}</div>
+    <details class="en-meer"><summary>Tabel per uur</summary><table class="en-tabel"><thead><tr><th>Uur</th><th>Prijs (gem.)</th><th>Zon kW</th><th>Net kW</th></tr></thead><tbody>${tabel.join("")}</tbody></table></details>`;
 }
 
 function enKaartHover() {
@@ -4746,10 +4751,10 @@ function enKaartHover() {
     const px = ((ev.touches ? ev.touches[0].clientX : ev.clientX) - r.left) * sx;
     const t = Math.floor((c.t0 + (px - c.P.l) / c.iw * (c.t1 - c.t0)) / c.KW) * c.KW;
     if (t < c.t0 || t >= c.t1) { tip.hidden = true; return; }
-    const p = c.pr.find(q => q[0] === t), zg = c.zonH.find(q => q[0] === t), zf = c.zonF.find(q => q[0] === t), n = c.netH.find(q => q[0] === t);
+    const p = c.pr.find(q => q[0] === (c.perUur ? Math.floor(t / 3600) * 3600 : t)), zg = c.zonH.find(q => q[0] === t), zf = c.zonF.find(q => q[0] === t), n = c.netH.find(q => q[0] === t);
     const xm = c.P.l + (t + c.KW / 2 - c.t0) / (c.t1 - c.t0) * c.iw;
     kruis.setAttribute("x1", xm); kruis.setAttribute("x2", xm); kruis.setAttribute("visibility", "visible");
-    tip.innerHTML = `<b>${enDag(t)}${enUur(t)}–${enUur(t + c.KW)}</b><br>Prijs ${p ? enCt(p[2]) : "–"}` +
+    tip.innerHTML = `<b>${enDag(t)}${enUur(t)}–${enUur(t + c.KW)}</b><br>Prijs ${p ? enCt(p[2]) + (c.perUur ? " (uur)" : "") : "–"}` +
       (zg ? `<br>Zon ${enKw(zg[1])} kW` : zf ? `<br>Zon verwacht ${enKw(zf[1])} kW` : "") + (n ? `<br>Net ${n[1] < 0 ? "−" : ""}${enKw(n[1])} kW` : "");
     tip.hidden = false; tip.style.left = Math.min(Math.max(xm / sx, 70), r.width - 70) + "px"; tip.style.top = "8px";
   };
