@@ -59,7 +59,9 @@ main{padding-block:16px 110px}
 
 /* Tabbalk */
 .tabs{position:fixed;left:0;right:0;bottom:0;z-index:6;background:var(--surface);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom,0px)}
-.tabs .wrap{display:grid;grid-template-columns:repeat(5,1fr);max-width:760px}
+.tabs .wrap{display:grid;grid-template-columns:repeat(6,1fr);max-width:860px}
+.tabs .wrap:has(> [data-tab="budget"][hidden]){grid-template-columns:repeat(5,1fr)}
+@media (max-width:400px){ .tabs button{font-size:.78rem;padding-inline:2px} }
 .tabs button{border:0;background:none;padding:10px 4px 12px;font-size:.88rem;color:var(--muted);display:flex;flex-direction:column;align-items:center;gap:3px;border-top:3px solid transparent}
 .tabs button svg{width:22px;height:22px}
 .tabs button[aria-current="page"]{color:var(--primary);border-top-color:var(--accent);font-weight:700}
@@ -407,6 +409,7 @@ details.voorraad[open] summary h3::after{content:"verbergen"}
   <button data-tab="agenda"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4M8 14h3v3H8z"/></svg>Agenda</button>
   <button data-tab="menu" data-eten><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 4v7a2 2 0 0 0 4 0V4M9 11v9M16 4c-1.7 1-2.5 3-2.5 6h2.5v10"/></svg>Eten</button>
   <button data-tab="lijsten"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/></svg>Lijsten</button>
+  <button data-tab="energie"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2.5 5 13.5h6l-1 8 8-11h-6l1-8z" stroke-linejoin="round"/></svg>Energie</button>
   <button data-tab="budget"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M16 14.5h2"/></svg>Budget</button>
 </div></nav>
 
@@ -4448,6 +4451,330 @@ function r5KinderenKaart(kaart) {
   return rijen ? kaart("Kinderen vandaag", `<ul class="vlijst">${rijen}</ul>`) : "";
 }
 </script>
+<style>
+/* Energie: live-tegels, laadpaal (Uit/Slim/Snel), advies per toestel en een dagkaart (prijs boven, vermogen onder; één as per paneel) */
+:root{ --en-zon:#b07a14; --en-net:#2f6fb5; --en-prijs:#24493f }
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){ --en-zon:#b98326; --en-net:#5b95db; --en-prijs:#8cc2b0 }}
+:root[data-theme="dark"]{ --en-zon:#b98326; --en-net:#5b95db; --en-prijs:#8cc2b0 }
+.en-kop{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:12px}
+.en-kop h2{margin:0;font-family:var(--font-display);font-size:1.35rem}
+.en-kop .muted{font-size:.85rem}
+.en-grid{display:grid;gap:14px}
+body.breed .en-grid{grid-template-columns:minmax(0,1fr) 380px;align-items:start}
+.en-col{display:grid;gap:14px;min-width:0}
+body:not(.breed) .en-col{display:contents}
+body:not(.breed) .en-grafiek{order:9}
+.en-tegels{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+@media (max-width:520px){ .en-tegels{grid-template-columns:repeat(2,minmax(0,1fr))} }
+.en-tegel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:10px 12px;min-width:0}
+.en-tegel .lbl-klein{display:flex;align-items:center;gap:6px}
+.en-tegel .en-v{font-family:var(--font-display);font-size:1.5rem;font-weight:700;line-height:1.15;margin-top:2px;font-variant-numeric:tabular-nums}
+.en-tegel .en-v small{font-size:.8rem;font-weight:400;color:var(--muted);margin-left:3px}
+.en-tegel .en-s{font-size:.82rem;color:var(--muted);margin-top:2px}
+.en-stip{width:9px;height:9px;border-radius:50%;display:inline-block;flex:none}
+.en-blok{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px}
+.en-blok h3{margin:0 0 8px;font-family:var(--font-display);font-size:1.05rem}
+.en-laad .seg{display:flex;width:100%;margin:10px 0 8px}
+.en-laad .seg button{flex:1;padding:12px 8px;font-size:1rem}
+.en-laad .seg button:disabled{opacity:.55;cursor:not-allowed}
+.en-laad .en-st{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-variant-numeric:tabular-nums}
+.en-laad .en-uitleg{font-size:.85rem;color:var(--muted);margin:0}
+.en-adv{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.en-adv li{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:4px 10px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+.en-adv li:first-child{border-top:0;padding-top:0}
+.en-adv .en-ico{font-size:1.4rem;text-align:center;grid-row:span 2}
+.en-adv .en-wat{font-weight:700}
+.en-adv .en-wanneer{font-family:var(--font-display);font-size:1.15rem;font-weight:700;text-align:right;font-variant-numeric:tabular-nums}
+.en-adv .en-waarom{font-size:.85rem;color:var(--muted);grid-column:2 / 4}
+.en-tag{display:inline-block;font-size:.75rem;border-radius:99px;padding:1px 8px;background:var(--sunk);color:var(--fg);margin-left:6px;vertical-align:1px}
+.en-kaart{position:relative}
+.en-kaart svg{display:block;width:100%;height:auto;overflow:visible}
+.en-kaart .en-as{font-size:11px;fill:var(--muted)}
+.en-kaart .en-grid-l{stroke:var(--line);stroke-width:1}
+.en-kaart .en-nul{stroke:var(--muted);stroke-width:1}
+.en-kaart .en-nu{stroke:var(--fg);stroke-width:1;stroke-dasharray:3 3}
+.en-kaart .en-band{fill:var(--accent-soft)}
+.en-kaart .en-band-t{font-size:11px;fill:var(--fg);font-weight:700}
+.en-leg{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:.85rem;color:var(--muted);margin:8px 0 2px}
+.en-leg span{display:inline-flex;align-items:center;gap:6px}
+.en-leg i{display:inline-block;width:16px;height:10px;border-radius:2px}
+.en-tip{position:absolute;pointer-events:none;background:var(--fg);color:var(--bg);font-size:.82rem;padding:7px 10px;border-radius:8px;white-space:nowrap;transform:translate(-50%,-100%);z-index:3;line-height:1.4;font-variant-numeric:tabular-nums}
+.en-tip[hidden]{display:none}
+.en-fout{background:var(--accent-soft);border-radius:var(--r);padding:12px 14px}
+.en-tabel{width:100%;border-collapse:collapse;font-size:.85rem;font-variant-numeric:tabular-nums}
+.en-tabel th,.en-tabel td{padding:4px 6px;border-bottom:1px solid var(--line);text-align:right}
+.en-tabel th:first-child,.en-tabel td:first-child{text-align:left}
+details.en-meer summary{cursor:pointer;color:var(--muted);font-size:.85rem;margin-top:8px}
+</style>
+<script>/* Kring – rekenregels energie: beste startmoment per toestel uit kwartierprijzen (Frank via evcc) en zonneverwachting.
+   Zuivere functies (ook testbaar met node). Tijden in seconden (Unix), vermogens in kW, prijzen in €/kWh. */
+(function (root) {
+  "use strict";
+  const KW = 900;   // een kwartier in seconden
+
+  // Gemeten met de meetstekkers in HA (4–14/11/2026): mediaan per kwartier van een programma.
+  const TOESTELLEN = [
+    { id: "vaatwasser", naam: "Vaatwasser", ico: "🍽️", kw: [1.46, 0.71, 0.55, 1.26, 0.94], nacht: true },
+    { id: "wasmachine", naam: "Wasmachine", ico: "🧺", kw: [0.9, 1.6, 0.2, 0.1, 0.1, 0.1, 0.1, 0.1], nacht: false },
+    { id: "droogkast", naam: "Droogkast", ico: "🌬️", kw: [0.42, 0.56, 0.67, 0.72, 0.68, 0.23], nacht: false },
+  ];
+  const BASISLAST = 0.35;          // kW die het huis zelf al verbruikt; zon daarboven is "over"
+  const STIL_VAN = 22, STIL_TOT = 7; // wasmachine en droogkast niet 's nachts (lawaai, kreukels)
+
+  const uurLokaal = t => Number(new Date(t * 1000).toLocaleString("en-GB", { timeZone: "Europe/Brussels", hour: "2-digit", hour12: false })) % 24;
+
+  // Opzoeken per kwartier
+  function index(status) {
+    const imp = new Map(), inj = new Map(), zon = new Map();
+    for (const [s, , p] of status.prijzen || []) imp.set(s, p);
+    for (const [s, , p] of status.injectie || []) inj.set(s, p);
+    for (const [t, w] of status.zon || []) zon.set(Math.floor(t / KW) * KW, (w || 0) / 1000);
+    return { imp, inj, zon };
+  }
+
+  // Kost van één programma met start op kwartier t0 (alle kwartieren moeten een prijs hebben)
+  function kost(ix, toestel, t0, basis = BASISLAST, wagen = null) {
+    let euro = 0, kwh = 0, zonKwh = 0;
+    for (let q = 0; q < toestel.kw.length; q++) {
+      const t = t0 + q * KW, pi = ix.imp.get(t);
+      if (pi == null) return null;
+      const pu = ix.inj.has(t) ? ix.inj.get(t) : pi * 0.5;
+      const bezet = basis + (wagen && t < wagen.tot ? wagen.kw : 0);   // een ladende wagen neemt de zon eerst
+      const over = Math.max(0, (ix.zon.get(t) || 0) - bezet);
+      const e = toestel.kw[q] / 4, uitZon = Math.min(toestel.kw[q], over) / 4;
+      // Zon die het toestel opneemt, had je anders geïnjecteerd: die kost de injectieprijs.
+      euro += uitZon * pu + (e - uitZon) * pi; kwh += e; zonKwh += uitZon;
+    }
+    return { euro, kwh, zonAandeel: kwh ? zonKwh / kwh : 0 };
+  }
+
+  // Beste start tussen nu en het laatste kwartier met een prijs
+  function advies(status, nu = Date.now() / 1000, toestellen = TOESTELLEN, basis = BASISLAST) {
+    const ix = index(status), lp = status.laadpunt || {};
+    // Laadt de wagen nu, dan rekenen we de komende 2 uur met zijn vermogen (duur onbekend zonder batterijpercentage).
+    const wagen = lp.laadt && lp.vermogen ? { kw: lp.vermogen / 1000, tot: nu + 2 * 3600 } : null;
+    const eind = Math.max(0, ...[...ix.imp.keys()]) + KW;
+    const eerste = Math.floor(nu / KW) * KW;
+    return toestellen.map(td => {
+      const nuK = kost(ix, td, eerste, basis, wagen);
+      let best = null;
+      for (let t = eerste; t + td.kw.length * KW <= eind; t += KW) {
+        if (!td.nacht) { const u0 = uurLokaal(t), u1 = uurLokaal(t + td.kw.length * KW - 1); if (u0 >= STIL_VAN || u0 < STIL_TOT || u1 >= STIL_VAN || u1 < STIL_TOT) continue; }
+        if (t > nu + 24 * 3600) break;
+        const k = kost(ix, td, t, basis, wagen);
+        if (k && (!best || k.euro < best.euro - 0.005)) best = { start: t, eind: t + td.kw.length * KW, ...k };
+      }
+      return { toestel: td, best, nu: nuK, besparing: best && nuK ? nuK.euro - best.euro : null };
+    });
+  }
+
+  function dagExtremen(status, nu = Date.now() / 1000) {
+    const rest = (status.prijzen || []).filter(p => p[1] > nu);
+    if (!rest.length) return null;
+    const min = rest.reduce((a, b) => (b[2] < a[2] ? b : a)), max = rest.reduce((a, b) => (b[2] > a[2] ? b : a));
+    const gem = rest.reduce((a, b) => a + b[2], 0) / rest.length;
+    return { min, max, gem, tot: rest[rest.length - 1][1] };
+  }
+
+  const api = { TOESTELLEN, BASISLAST, KW, index, kost, advies, dagExtremen, uurLokaal };
+  if (typeof module !== "undefined" && module.exports) module.exports = api; else root.KringEnergie = api;
+})(typeof window !== "undefined" ? window : globalThis);
+</script>
+<script>/* Kring – energiepagina: evcc via Home Assistant (Edge Function ha-energie). Lezen voor iedereen van het gezin,
+   laadmodus wijzigen enkel voor beheerder en lid (de functie en de database weigeren het ook). */
+"use strict";
+
+/* Demo: fictieve dag met prijzen en zon */
+function enDemoStatus(modus) {
+  const nu = Date.now() / 1000, KW = 900;
+  const d = new Date(); d.setHours(0, 0, 0, 0); const t0 = d.getTime() / 1000;
+  const prijzen = [], injectie = [], zon = [];
+  for (let q = 0; q < 96; q++) {
+    const u = q / 4, p = 0.30 + 0.06 * Math.cos((u - 3) / 24 * 2 * Math.PI) + (u >= 7 && u < 9 ? 0.05 : 0) + (u >= 17 && u < 20 ? 0.08 : 0) - (u >= 12 && u < 16 ? 0.07 : 0);
+    prijzen.push([t0 + q * KW, t0 + (q + 1) * KW, +p.toFixed(4)]); injectie.push([t0 + q * KW, t0 + (q + 1) * KW, +(p - 0.17).toFixed(4)]);
+  }
+  for (let t = Math.floor(nu / KW) * KW; t < t0 + 36 * 3600; t += KW) {
+    const u = ((t - t0) / 3600) % 24; zon.push([t, u > 8 && u < 17 ? Math.round(3200 * Math.sin((u - 8) / 9 * Math.PI)) : 0]);
+  }
+  const u = (nu - t0) / 3600, z = u > 8 && u < 17 ? Math.round(3200 * Math.sin((u - 8) / 9 * Math.PI)) : 0;
+  const wagen = modus === "now" ? 3450 : modus === "smart" ? Math.max(0, Math.min(3680, z - 400)) : 0;
+  return { tijd: new Date().toISOString(), magSturen: true,
+    live: { zon: z, huis: 420, wagen, net: 420 + wagen - z, prijs: prijzen[Math.floor(u * 4)][2], injectie: injectie[Math.floor(u * 4)][2], netLimiet: 4500 },
+    laadpunt: { titel: "Laadpaal", modus, altijdLaden: "off", verbonden: true, laadt: wagen > 0, vermogen: wagen, sessieKwh: 4.2, sessieDuurMin: 75, wagen: "", soc: null, plan: false, maxA: 16 },
+    prijzen, injectie, zon, zonKwh: { vandaag: 9.4, morgen: 6.1 } };
+}
+function enDemoHist() {
+  const KW = 900, d = new Date(); d.setHours(0, 0, 0, 0); const t0 = d.getTime() / 1000, nu = Date.now() / 1000, net = [], zon = [];
+  for (let t = t0; t < nu - KW; t += KW) { const u = (t - t0) / 3600, z = u > 8 && u < 17 ? Math.round(3000 * Math.sin((u - 8) / 9 * Math.PI)) : 0;
+    const v = 350 + (u >= 7 && u < 8 ? 900 : 0) + (u >= 18 && u < 19.5 ? 2600 : 0); zon.push([t, z]); net.push([t, v - z]); }
+  return { net, zon };
+}
+window.EN_LOCAL = {
+  async loadEnergie(actie) { const e = this.d.energie = this.d.energie || { modus: "smart" }; return actie === "historiek" ? enDemoHist() : enDemoStatus(e.modus); },
+  async zetLaadmodus(m) { this.d.energie = { ...(this.d.energie || {}), modus: m }; this.save(); return enDemoStatus(m); }
+};
+window.EN_SUPA = {
+  async enRoep(body) {
+    const { data, error } = await this.sb.functions.invoke("ha-energie", { body });
+    if (error) { let m = error.message; try { const j = await error.context.json(); m = j.fout || m; } catch (_) { /* */ } throw new Error(m); }
+    if (data && data.fout) throw new Error(data.fout);
+    return data;
+  },
+  async loadEnergie(actie) { return this.enRoep({ actie }); },
+  async zetLaadmodus(m) { return this.enRoep({ actie: "laadmodus", modus: m }); }
+};
+
+const EN_MODI = [["off", "Uit"], ["smart", "Slim"], ["now", "Snel"]];
+const enKw = w => w == null ? "–" : (Math.abs(w) / 1000).toLocaleString("nl-BE", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const enCt = p => p == null ? "–" : (p * 100).toLocaleString("nl-BE", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + " ct";
+const enUur = t => new Date(t * 1000).toLocaleTimeString("nl-BE", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Brussels" });
+const enDag = t => { const a = new Date(t * 1000).toLocaleDateString("nl-BE", { timeZone: "Europe/Brussels" }), b = new Date().toLocaleDateString("nl-BE", { timeZone: "Europe/Brussels" }); return a === b ? "" : "morgen "; };
+
+async function herlaadEnergie(metHist) {
+  const e = S.en = S.en || {};
+  e.laden = true;
+  try {
+    const [st, hi] = await Promise.all([db.loadEnergie("status"), metHist || !e.hist || Date.now() - (e.histT || 0) > 5 * 60e3 ? db.loadEnergie("historiek").catch(x => { console.warn("historiek:", x); return e.hist || null; }) : null]);
+    e.status = st; e.fout = null; e.t = Date.now();
+    if (hi) { e.hist = hi; e.histT = Date.now(); }
+  } catch (x) { console.error(x); e.fout = x.message || String(x); }
+  e.laden = false;
+}
+
+function viewEnergie() {
+  const e = S.en = S.en || {};
+  if (!e.status && !e.fout) { $("#view").innerHTML = `<div class="en-kop"><h2>Energie</h2></div><p class="muted">Gegevens ophalen…</p>`; if (!e.laden) herlaadEnergie(true).then(() => S.tab === "energie" && viewEnergie()); return; }
+  if (!e.status) { $("#view").innerHTML = `<div class="en-kop"><h2>Energie</h2><button class="knop sec klein" data-envernieuw>Opnieuw</button></div><div class="en-fout"><b>Geen verbinding met Home Assistant.</b><br>${esc(e.fout)}</div>`; return; }
+  const s = e.status, L = s.live || {}, lp = s.laadpunt || {}, ex = KringEnergie.dagExtremen(s);
+  const adv = KringEnergie.advies(s);
+  const netTxt = L.net == null ? "" : L.net >= 0 ? "afname" : "injectie";
+  const tegel = (lbl, kleur, w, sub) => `<div class="en-tegel"><div class="lbl-klein">${kleur ? `<span class="en-stip" style="background:${kleur}"></span>` : ""}${lbl}</div><div class="en-v">${enKw(w)}<small>kW</small></div><div class="en-s">${sub || "&nbsp;"}</div></div>`;
+  const prijsDuid = ex ? (L.prijs <= ex.min[2] + 0.01 ? `<span class="en-tag">goedkoop</span>` : L.prijs >= ex.gem + 0.04 ? `<span class="en-tag">duur</span>` : "") : "";
+
+  const laadSt = !lp.verbonden ? "Geen wagen aangesloten" : lp.laadt ? `Laadt aan ${enKw(lp.vermogen)} kW` : "Aangesloten, laadt nu niet";
+  const modusUitleg = { off: "Laden staat uit, ook als de wagen aangesloten is.", smart: "evcc laadt op zonne-overschot en kiest de goedkope kwartieren." + (lp.altijdLaden === "on" ? " Altijd laden staat aan: minstens 6 A." : ""), now: `Laadt meteen op vol vermogen, binnen de grens van ${enKw(L.netLimiet || 4500)} kW voor het hele huis.` }[lp.modus] || "";
+  const laad = `<section class="en-blok en-laad"><h3>${esc(lp.titel || "Laadpaal")}</h3>
+    <div class="en-st"><span>${laadSt}${lp.wagen ? " · " + esc(lp.wagen) : ""}${lp.soc ? " · " + Math.round(lp.soc) + " %" : ""}</span>${lp.verbonden && lp.sessieKwh ? `<span class="muted">${lp.sessieKwh.toLocaleString("nl-BE")} kWh deze sessie</span>` : ""}</div>
+    <div class="seg" role="group" aria-label="Laadmodus">${EN_MODI.map(([k, l]) => `<button data-enmodus="${k}" aria-pressed="${lp.modus === k}" ${s.magSturen ? "" : "disabled"}>${l}</button>`).join("")}</div>
+    <p class="en-uitleg">${s.magSturen ? modusUitleg : "Alleen volwassenen kunnen de laadmodus wijzigen. " + modusUitleg}</p></section>`;
+
+  const advHtml = `<section class="en-blok"><h3>Beste moment om te starten</h3><ul class="en-adv">${adv.map(a => {
+      const t = a.toestel, b = a.best;
+      if (!b) return `<li><span class="en-ico" aria-hidden="true">${t.ico}</span><span class="en-wat">${t.naam}</span><span class="en-wanneer">–</span><span class="en-waarom">Geen prijzen genoeg vooruit bekend.</span></li>`;
+      const nuIs = b.start <= Date.now() / 1000 + 60;
+      const waarom = (b.zonAandeel >= 0.5 ? `${Math.round(b.zonAandeel * 100)} % op eigen zon` : b.zonAandeel > 0.1 ? `deels zon (${Math.round(b.zonAandeel * 100)} %), goedkope kwartieren` : "goedkoopste kwartieren") +
+        ` · klaar ${enUur(b.eind)} · ±${eur(b.euro)}` + (a.besparing > 0.02 ? ` (nu starten: ${eur(a.nu.euro)})` : "");
+      return `<li><span class="en-ico" aria-hidden="true">${t.ico}</span><span class="en-wat">${t.naam}${nuIs ? '<span class="en-tag">nu</span>' : ""}</span><span class="en-wanneer">${nuIs ? "Nu" : enDag(b.start) + enUur(b.start)}</span><span class="en-waarom">${waarom}</span></li>`;
+    }).join("")}</ul>
+    <details class="en-meer"><summary>Hoe wordt dit berekend?</summary><p class="en-uitleg">Per kwartier: de prijs van Frank (all-in, zoals in evcc) voor stroom van het net, en de injectievergoeding voor eigen zon die je anders zou terugleveren. Zon boven ${KringEnergie.BASISLAST.toLocaleString("nl-BE")} kW huisverbruik telt als overschot; laadt de wagen, dan gaat de zon de eerste 2 uur naar de wagen. Programma's zijn gemeten met de meetstekkers (vaatwasser ±1,2 kWh, wasmachine ±0,8 kWh, droogkast ±0,8 kWh). Wasmachine en droogkast niet tussen 22 en 7 u. ${ex && ex.tot ? "Prijzen bekend tot " + enDag(ex.tot - 1) + enUur(ex.tot) + "." : ""}</p></details></section>`;
+
+  $("#view").innerHTML = `<div class="en-kop"><h2>Energie</h2><span class="muted">${e.laden ? "bijwerken…" : "bijgewerkt " + new Date(e.t).toLocaleTimeString("nl-BE", { hour: "2-digit", minute: "2-digit" })} · <button class="link" data-envernieuw>Vernieuwen</button></span></div>
+    ${db.demo ? `<div class="banner"><b>Testversie</b> met fictieve prijzen en zon. In de echte versie komt alles live uit evcc en Home Assistant.</div>` : ""}
+    ${e.fout ? `<div class="en-fout" style="margin-bottom:12px">Laatste update mislukt: ${esc(e.fout)}</div>` : ""}
+    <div class="en-grid"><div class="en-col">
+      <div class="en-tegels">
+        ${tegel("Zon", "var(--en-zon)", L.zon, s.zonKwh && s.zonKwh.morgen != null ? `morgen ±${s.zonKwh.morgen.toLocaleString("nl-BE")} kWh` : "")}
+        ${tegel("Huis", "", L.huis, "zonder wagen")}
+        ${tegel("Wagen", "", L.wagen, lp.laadt ? "laadt" : lp.verbonden ? "aangesloten" : "niet aangesloten")}
+        ${tegel("Net", "var(--en-net)", L.net, netTxt + (L.prijs != null ? " · " + enCt(L.prijs) : "") + prijsDuid)}
+      </div>
+      <section class="en-blok en-grafiek"><h3>Vandaag${(s.prijzen || []).some(p => enDag(p[0])) ? " en morgen" : ""}</h3>${enKaartHtml(s, e.hist, adv)}</section>
+    </div><div class="en-col">${laad}${advHtml}</div></div>`;
+  enKaartHover();
+}
+
+/* Dagkaart: boven prijs per kwartier (staafjes), onder vermogen (zon gemeten + verwachting, net). Twee panelen, elk één as. */
+function enKaartHtml(s, h, adv) {
+  const KW = 900, nu = Date.now() / 1000;
+  const d = new Date(); d.setHours(0, 0, 0, 0); const t0 = d.getTime() / 1000;
+  const pr = s.prijzen || [];
+  const t1 = Math.max(t0 + 86400, pr.length ? pr[pr.length - 1][1] : 0);
+  const W = Math.max(320, Math.min(1100, ($("#view") && $("#view").clientWidth || 700) - (document.body.classList.contains("breed") ? 440 : 30)));
+  const P = { l: 40, r: 8 }, iw = W - P.l - P.r;
+  const x = t => P.l + (t - t0) / (t1 - t0) * iw;
+  // Prijspaneel
+  const pTop = 18, pH = 70, pw = pr.map(p => p[2]);
+  const pMin = pw.length ? Math.floor(Math.min(...pw) * 20) / 20 : 0, pMax = pw.length ? Math.max(pMin + 0.05, Math.ceil(Math.max(...pw) * 20) / 20) : 0.5;   // stappen van 5 ct
+  const yp = v => pTop + pH - (v - pMin) / (pMax - pMin) * pH;
+  // Vermogenspaneel
+  const zonH = (h && h.zon || []).filter(p => p[0] >= t0), netH = (h && h.net || []).filter(p => p[0] >= t0);
+  const zonF = (s.zon || []).filter(p => p[0] >= Math.floor(nu / KW) * KW && p[0] < t1);
+  const alle = [...zonH.map(p => p[1]), ...netH.map(p => p[1]), ...zonF.map(p => p[1]), 0].map(v => v / 1000);
+  const vMax = Math.max(1, ...alle), vMin = Math.min(0, ...alle);
+  const vTop = pTop + pH + 34, vH = 130, yv = v => vTop + vH - (v - vMin) / (vMax - vMin) * vH;
+  const H = vTop + vH + 22;
+  const prZ = pr.filter(p => p[0] >= t0 && p[0] < t1);
+  const trap = pts => pts.map((p, i) => `${i ? "L" : "M"}${x(p[0]).toFixed(1)},${yp(p[2]).toFixed(1)}L${x(p[1]).toFixed(1)},${yp(p[2]).toFixed(1)}`).join("");
+  const voorbij = prZ.filter(p => p[0] < nu), komend = prZ.filter(p => p[1] > nu);
+  const pad = (pts, close) => { if (!pts.length) return ""; let dd = `M${x(pts[0][0]).toFixed(1)},${yv(pts[0][1] / 1000).toFixed(1)}`; for (const [t, w] of pts) dd += `L${x(t).toFixed(1)},${yv(w / 1000).toFixed(1)}L${x(t + KW).toFixed(1)},${yv(w / 1000).toFixed(1)}`; return close ? dd + `L${x(pts[pts.length - 1][0] + KW).toFixed(1)},${yv(0)}L${x(pts[0][0]).toFixed(1)},${yv(0)}Z` : dd; };
+  // Assen
+  const uren = []; for (let t = t0; t <= t1; t += 3 * 3600) uren.push(t);
+  const pTicks = [pMin, (pMin + pMax) / 2, pMax].map(v => Math.round(v * 1000) / 1000);
+  const vStap = vMax - vMin > 6 ? 2 : 1, vTicks = []; for (let v = Math.ceil(vMin / vStap) * vStap; v <= vMax; v += vStap) vTicks.push(v);
+  // Adviesbanden (enkel de eerste twee toestellen met een ander moment dan nu, om het leesbaar te houden)
+  const banden = (adv || []).filter(a => a.best && a.best.start > nu + 60).slice(0, 3);
+  const svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Kwartierprijzen en vermogen vandaag">
+    <text class="en-as" x="${P.l}" y="11">Prijs (ct/kWh)</text>
+    ${pTicks.map(v => `<line class="en-grid-l" x1="${P.l}" x2="${W - P.r}" y1="${yp(v)}" y2="${yp(v)}"/><text class="en-as" x="${P.l - 5}" y="${yp(v) + 4}" text-anchor="end">${(v * 100).toLocaleString("nl-BE", { maximumFractionDigits: 1 })}</text>`).join("")}
+    ${banden.map((a, i) => `<rect class="en-band" x="${x(a.best.start)}" y="${vTop}" width="${Math.max(2, x(a.best.eind) - x(a.best.start))}" height="${vH}" opacity=".8"/><text class="en-band-t" x="${x(a.best.start) + 3}" y="${vTop + 12 + i * 13}">${a.toestel.ico}</text>`).join("")}
+    ${komend.length ? `<path d="${trap(komend)}L${x(komend[komend.length - 1][1])},${pTop + pH}L${x(komend[0][0])},${pTop + pH}Z" fill="var(--en-prijs)" opacity=".12"/>` : ""}
+    <path d="${trap(voorbij)}" fill="none" stroke="var(--en-prijs)" stroke-width="2" opacity=".45"/><path d="${trap(komend)}" fill="none" stroke="var(--en-prijs)" stroke-width="2"/>
+    <text class="en-as" x="${P.l}" y="${vTop - 8}">Vermogen (kW)</text>
+    ${vTicks.map(v => `<line class="${v === 0 ? "en-nul" : "en-grid-l"}" x1="${P.l}" x2="${W - P.r}" y1="${yv(v)}" y2="${yv(v)}"/><text class="en-as" x="${P.l - 5}" y="${yv(v) + 4}" text-anchor="end">${v}</text>`).join("")}
+    <path d="${pad(zonH, true)}" fill="var(--en-zon)" opacity=".35"/><path d="${pad(zonH)}" fill="none" stroke="var(--en-zon)" stroke-width="2"/>
+    <path d="${pad(zonF, true)}" fill="var(--en-zon)" opacity=".12"/><path d="${pad(zonF)}" fill="none" stroke="var(--en-zon)" stroke-width="2" stroke-dasharray="4 3"/>
+    <path d="${pad(netH)}" fill="none" stroke="var(--en-net)" stroke-width="2"/>
+    ${uren.map(t => `<text class="en-as" x="${x(t)}" y="${H - 4}" text-anchor="middle">${enUur(t).replace(":00", "")}u</text>`).join("")}
+    <line class="en-nu" x1="${x(nu)}" x2="${x(nu)}" y1="${pTop - 4}" y2="${vTop + vH}"/>
+    <line id="en-kruis" stroke="var(--muted)" stroke-width="1" visibility="hidden" y1="${pTop}" y2="${vTop + vH}" x1="-10" x2="-10"/>
+    <rect id="en-vang" x="${P.l}" y="0" width="${iw}" height="${H}" fill="transparent"/>
+  </svg>`;
+  enKaartHtml.ctx = { t0, t1, P, iw, W, pr, zonH, netH, zonF, KW };
+  const rij = t => { const p = pr.find(q => q[0] === t), z = (zonH.find(q => q[0] === t) || zonF.find(q => q[0] === t) || [])[1], n = (netH.find(q => q[0] === t) || [])[1];
+    return `<tr><td>${enDag(t)}${enUur(t)}</td><td>${p ? enCt(p[2]) : ""}</td><td>${z != null ? enKw(z) : ""}</td><td>${n != null ? (n < 0 ? "−" : "") + enKw(n) : ""}</td></tr>`; };
+  const tabel = []; for (let t = t0; t < t1; t += 3600) tabel.push(rij(t));
+  return `<div class="en-kaart">${svg}<div class="en-tip" id="en-tip" hidden></div></div>
+    <div class="en-leg"><span><i style="background:var(--en-prijs);height:3px"></i>Prijs per kwartier</span><span><i style="background:var(--en-zon);opacity:.6"></i>Zon gemeten</span><span><i style="border:2px dashed var(--en-zon);height:6px"></i>Zon verwacht</span><span><i style="background:var(--en-net);height:3px"></i>Net (+ afname, − injectie)</span>${banden.length ? `<span><i style="background:var(--accent-soft)"></i>Advies</span>` : ""}</div>
+    <details class="en-meer"><summary>Tabel per uur</summary><table class="en-tabel"><thead><tr><th>Uur</th><th>Prijs</th><th>Zon kW</th><th>Net kW</th></tr></thead><tbody>${tabel.join("")}</tbody></table></details>`;
+}
+
+function enKaartHover() {
+  const vang = $("#en-vang"), tip = $("#en-tip"), kruis = $("#en-kruis"); if (!vang) return;
+  const svg = vang.ownerSVGElement;
+  const toon = ev => {
+    const c = enKaartHtml.ctx, r = svg.getBoundingClientRect(), sx = c.W / r.width;
+    const px = ((ev.touches ? ev.touches[0].clientX : ev.clientX) - r.left) * sx;
+    const t = Math.floor((c.t0 + (px - c.P.l) / c.iw * (c.t1 - c.t0)) / c.KW) * c.KW;
+    if (t < c.t0 || t >= c.t1) { tip.hidden = true; return; }
+    const p = c.pr.find(q => q[0] === t), zg = c.zonH.find(q => q[0] === t), zf = c.zonF.find(q => q[0] === t), n = c.netH.find(q => q[0] === t);
+    const xm = c.P.l + (t + c.KW / 2 - c.t0) / (c.t1 - c.t0) * c.iw;
+    kruis.setAttribute("x1", xm); kruis.setAttribute("x2", xm); kruis.setAttribute("visibility", "visible");
+    tip.innerHTML = `<b>${enDag(t)}${enUur(t)}–${enUur(t + c.KW)}</b><br>Prijs ${p ? enCt(p[2]) : "–"}` +
+      (zg ? `<br>Zon ${enKw(zg[1])} kW` : zf ? `<br>Zon verwacht ${enKw(zf[1])} kW` : "") + (n ? `<br>Net ${n[1] < 0 ? "−" : ""}${enKw(n[1])} kW` : "");
+    tip.hidden = false; tip.style.left = Math.min(Math.max(xm / sx, 70), r.width - 70) + "px"; tip.style.top = "8px";
+  };
+  const weg = () => { tip.hidden = true; kruis.setAttribute("visibility", "hidden"); };
+  vang.addEventListener("mousemove", toon); vang.addEventListener("touchstart", toon, { passive: true }); vang.addEventListener("touchmove", toon, { passive: true });
+  vang.addEventListener("mouseleave", weg); vang.addEventListener("touchend", () => setTimeout(weg, 1500));
+}
+
+document.addEventListener("click", ev => {
+  const b = ev.target.closest("[data-enmodus],[data-envernieuw]"); if (!b) return;
+  if ("envernieuw" in b.dataset) { run(async () => { await herlaadEnergie(true); if (S.tab === "energie") viewEnergie(); }); return; }
+  const m = b.dataset.enmodus, e = S.en || {};
+  if (!e.status || !e.status.magSturen || (e.status.laadpunt || {}).modus === m) return;
+  document.querySelectorAll("[data-enmodus]").forEach(x => { x.disabled = true; x.setAttribute("aria-pressed", String(x === b)); });
+  run(async () => {
+    try { e.status = await db.zetLaadmodus(m); e.t = Date.now(); toast("Laadmodus: " + (EN_MODI.find(x => x[0] === m) || [, m])[1]); }
+    finally { if (S.tab === "energie") viewEnergie(); }
+  });
+});
+/* Elke 30 s live bijwerken zolang de pagina zichtbaar is (de keukenschermversie blijft zo actueel) */
+setInterval(() => {
+  if (S.tab !== "energie" || document.hidden || !db || ($("#sheet") && !$("#sheet").hidden) || (S.en && S.en.laden)) return;
+  herlaadEnergie(false).then(() => { if (S.tab === "energie" && !document.querySelector(".en-meer[open]")) viewEnergie(); });
+}, 30000);
+</script>
 
 <script>
 "use strict";
@@ -4773,6 +5100,8 @@ Object.assign(LocalStore.prototype, window.R5_LOCAL);
 Object.assign(SupaStore.prototype, window.R5_SUPA);
 Object.assign(LocalStore.prototype, window.AF_LOCAL);
 Object.assign(SupaStore.prototype, window.AF_SUPA);
+Object.assign(LocalStore.prototype, window.EN_LOCAL);
+Object.assign(SupaStore.prototype, window.EN_SUPA);
 
 /* ================= Toestand ================= */
 const S = { tab: "vandaag", budgetView: pref.get("budgetView", "plan"), bperiode: (pref.get("bverdeling", {}) || {}).p || "jaar", bper: (pref.get("bverdeling", {}) || {}).w || "groep", bmaand: null, bfilter: "alle", bcat: null, brek: null, bzoek: "", budget: null,
@@ -4846,13 +5175,13 @@ function render(){
   if (S.tab === "budget" && !zb) S.tab = "vandaag";
   const eten = ["menu", "gerechten", "lijst", "diepvries"].includes(S.tab);
   document.querySelectorAll("#tabs button").forEach(b => b.setAttribute("aria-current", (b.dataset.tab === S.tab || ("eten" in b.dataset && eten)) ? "page" : "false"));
-  $("#weeknav").hidden = ["gerechten", "vandaag", "lijsten", "diepvries"].includes(S.tab) || (S.tab === "budget" && S.budgetView === "rekeningen");
-  document.body.classList.toggle("breed", window.innerWidth >= 1000 && (S.tab === "menu" || S.tab === "budget" || S.tab === "vandaag" || S.tab === "diepvries" || (S.tab === "agenda" && S.agendaView === "maand")));
+  $("#weeknav").hidden = ["gerechten", "vandaag", "lijsten", "diepvries", "energie"].includes(S.tab) || (S.tab === "budget" && S.budgetView === "rekeningen");
+  document.body.classList.toggle("breed", window.innerWidth >= 1000 && (S.tab === "menu" || S.tab === "budget" || S.tab === "vandaag" || S.tab === "diepvries" || S.tab === "energie" || (S.tab === "agenda" && S.agendaView === "maand")));
   const z = plus(S.week, 6);
   $("#w-lbl").innerHTML = (S.tab === "menu" || S.tab === "lijst") && S.pweek ? `<b>${pwLabel()}</b>` : S.tab === "budget" && S.bmaand ? `<b>${MAANDNAAM(S.bmaand)}</b>` : S.tab === "agenda" && S.agendaView === "maand" ? `<b>${MAANDEN[S.maand.getMonth()]} ${S.maand.getFullYear()}</b>`
     : `<b>Week ${weeknr(S.week)}</b> · ${S.week.getDate()} ${MND[S.week.getMonth()]} – ${z.getDate()} ${MND[z.getMonth()]}`;
   $("#modus").textContent = db && db.label ? db.label : "";
-  ({vandaag: viewVandaag, agenda: viewAgenda, menu: viewMenu, gerechten: viewGerechten, lijst: viewLijst, lijsten: viewLijsten, budget: viewBudget, diepvries: viewDiepvries})[S.tab]();
+  ({vandaag: viewVandaag, agenda: viewAgenda, menu: viewMenu, gerechten: viewGerechten, lijst: viewLijst, lijsten: viewLijsten, budget: viewBudget, diepvries: viewDiepvries, energie: viewEnergie})[S.tab]();
   if (eten) $("#view").insertAdjacentHTML("afterbegin", `<div class="seg eten-seg" role="group" aria-label="Eten">${[["menu", "Weekmenu"], ["gerechten", "Gerechten"], ["lijst", "Boodschappen"], ["diepvries", "Voorraad"]].map(([k, l]) => `<button data-tab="${k}" aria-pressed="${S.tab === k}">${l}</button>`).join("")}</div>`);
 }
 
@@ -5373,8 +5702,8 @@ document.addEventListener("drop", e => {
 });
 $("#sheet").addEventListener("click", e => { if (e.target.id === "sheet") sluitPaneel(); });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("#sheet").hidden) sluitPaneel(); });
-window.addEventListener("hashchange", () => { const h = location.hash.slice(1).split("/")[0]; if (["vandaag","agenda","menu","gerechten","lijst","lijsten","budget","diepvries"].includes(h) && h !== S.tab){ S.tab = h; render(); } dvOpenUitHash(); });
-let rT; window.addEventListener("resize", () => { clearTimeout(rT); rT = setTimeout(() => { if (S.tab === "diepvries" && (window.innerWidth >= 1000) === document.body.classList.contains("breed")) return; if (db && ["menu", "budget", "vandaag", "agenda", "diepvries"].includes(S.tab) && $("#sheet").hidden) render(); }, 200); });
+window.addEventListener("hashchange", () => { const h = location.hash.slice(1).split("/")[0]; if (["vandaag","agenda","menu","gerechten","lijst","lijsten","budget","diepvries","energie"].includes(h) && h !== S.tab){ S.tab = h; render(); } dvOpenUitHash(); });
+let rT; window.addEventListener("resize", () => { clearTimeout(rT); rT = setTimeout(() => { if (S.tab === "diepvries" && (window.innerWidth >= 1000) === document.body.classList.contains("breed")) return; if (db && ["menu", "budget", "vandaag", "agenda", "diepvries", "energie"].includes(S.tab) && $("#sheet").hidden) render(); }, 200); });
 
 async function kopieer(){
   const items = BL.teBestellen(lijstItems()), start = iso(S.pweek);
@@ -5392,7 +5721,7 @@ async function kopieer(){
 function laadScript(src){ return new Promise((ok, nok) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = () => nok(new Error("Kon " + src + " niet laden")); document.head.appendChild(s); }); }
 (async function start(){
   const cfg = window.KRING_CONFIG || {};
-  const h = location.hash.slice(1).split("/")[0]; if (["vandaag","agenda","menu","gerechten","lijst","lijsten","budget","diepvries"].includes(h)) S.tab = h;
+  const h = location.hash.slice(1).split("/")[0]; if (["vandaag","agenda","menu","gerechten","lijst","lijsten","budget","diepvries","energie"].includes(h)) S.tab = h;
   try {
     if (cfg.supabaseUrl && cfg.supabaseKey){
       await laadScript("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js");
