@@ -1872,6 +1872,7 @@ function viewVandaag() {
     ${r5OverlegKaart(kaart)}
     ${r5OpvolgKaart(kaart)}
     ${r5KinderenKaart(kaart)}
+    ${typeof duimKaart === "function" ? duimKaart() : ""}
     ${kaart("Vanavond", g ? `<button class="vk-groot" data-open="${g.id}">${esc(g.naam)}</button><p class="muted">${avond.porties || g.porties} personen${zonderIngr(g) ? "" : ` · ${g.ingredienten.length} ingrediënten`}</p>`
         : avond && avond.vrije_tekst ? `<p class="vk-groot">${esc(avond.vrije_tekst)}</p>` : `<button class="ag-leeg" data-slot="${vd}|avond">Nog niets gepland. Kies een gerecht</button>`, `<button class="link" data-goto="menu">Weekmenu</button>`)}
     ${kaart("Boodschappen", `<p><span class="getal">${open.length}</span> <span class="muted">te bestellen voor ${pwLabel()}${kost ? ` · geraamd ${eur(kost / 1)}` : ""}</span></p>`, `<button class="link" data-goto="lijst">Lijst</button>`)}
@@ -4137,6 +4138,28 @@ function ovOpvolging() {
     ${zonder ? `<p class="muted" style="font-size:.8rem;margin:2px 0 0">${zonder} duimpje(s) zonder gekende ouder.</p>` : ""}</section>`;
 }
 
+/* Vandaag-pagina, enkel voor ouders (niet in kindmodus): inklapbare kaart met de duimpjes van deze week,
+   de taken van vandaag en gisteren die nog geen duim hebben, en de grafiek "Wie volgt de kinderen op". */
+function duimKaart() {
+  if (!isOuder()) return "";
+  const kids = S.leden.filter(l => isKindLid(l.id)); if (!kids.length) return "";
+  const vd = AG.iso(new Date()), ma = AG.plus(vd, 1 - AG.weekdag(vd));
+  const week = R5L.weekTaken(AG, S.taken, ma, vd).filter(x => isKindLid(x.lid_id));
+  const perKind = kids.map(k => { const it = week.filter(x => x.lid_id === k.id); return { k, it, t: duimTelling(it), gedaan: it.filter(x => x.klaar).length }; }).filter(x => x.it.length);
+  const kort = perKind.map(x => `${esc(x.k.naam)} 👍 ${x.t.op}${x.t.neer ? ` · 👎 ${x.t.neer}` : ""}`).join(" · ");
+  const open = R5L.weekTaken(AG, S.taken, AG.plus(vd, -1), vd).filter(x => isKindLid(x.lid_id) && !duimVan(x.id, x.datum))
+    .sort((a, b) => b.datum.localeCompare(a.datum) || (a.tijd || "").localeCompare(b.tijd || ""));
+  const lijst = open.slice(0, 12).map(x => `<li><span class="wat">${x.klaar ? "✓" : "✗"} ${esc(x.titel)}<small>${esc((lid(x.lid_id) || {}).naam || "")} · ${x.datum === vd ? "vandaag" : "gisteren"}${x.klaar ? "" : " · niet afgevinkt"}</small></span>${duimHtml(x.id, x.datum)}</li>`).join("");
+  return `<details class="vk duimkaart" data-duimkaart ${pref.get("duimKaartOpen", false) ? "open" : ""}>
+    <summary class="vk-kop"><h2>Duimpjes</h2><span class="muted" style="font-size:.85rem">${kort ? "Deze week: " + kort : "Nog geen taken deze week"}</span></summary>
+    ${perKind.map(x => `<div class="ov-kindkop"><b>${esc(x.k.naam)}</b><span class="muted">${x.gedaan} van ${x.it.length} gedaan · 👍 ${x.t.op} · 👎 ${x.t.neer}</span></div>`).join("")}
+    ${lijst ? `<h3 style="font-size:.95rem;margin:14px 0 2px">Nog te beoordelen</h3><ul class="ov-duimen">${lijst}</ul>${open.length > 12 ? `<p class="muted" style="font-size:.85rem">+ ${open.length - 12} meer in de Eilandraad</p>` : ""}`
+      : `<p class="muted" style="margin:10px 0 0">Alles van vandaag en gisteren heeft een duim.</p>`}
+    <div class="duimkaart-grafiek">${ovOpvolging()}</div>
+  </details>`;
+}
+document.addEventListener("toggle", ev => { if (ev.target.matches && ev.target.matches("details[data-duimkaart]")) pref.set("duimKaartOpen", ev.target.open); }, true);
+
 /* Enkel voor ouders: alle taken van de kinderen van de afgelopen dagen, met duimpjes en een telling per kind */
 function ovDuimenKinderen(tb) {
   if (!isOuder()) return "";
@@ -4953,6 +4976,12 @@ setInterval(() => {
 .duim button[aria-pressed="true"]{opacity:1;filter:none;border-color:var(--primary);background:var(--drop)}
 .duim button:hover{opacity:.9}
 .ov-duimen{list-style:none;margin:0;padding:0}
+details.duimkaart > summary{cursor:pointer;list-style:none;flex-wrap:wrap;margin-bottom:0}
+details.duimkaart > summary::-webkit-details-marker{display:none}
+details.duimkaart > summary h2::before{content:"▸";display:inline-block;width:1em;color:var(--muted);transition:transform .15s}
+details.duimkaart[open] > summary h2::before{transform:rotate(90deg)}
+details.duimkaart[open] > summary{margin-bottom:6px}
+.duimkaart-grafiek .ov-sectie{border:0;padding:0;margin-top:14px;background:none}
 .ov-duimen li{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line)}
 .ov-duimen li:last-child{border-bottom:0}
 .ov-duimen .wat{min-width:0}
@@ -5011,7 +5040,7 @@ document.addEventListener("click", ev => {
   run(async () => {
     try { await db.zetDuim(taak, datum, nieuw || null); }
     catch (e) { await herlaadDuimen(); throw e; }
-    finally { if ($("#paneel") && $("#paneel").querySelector(".ov-stappen") && !$("#sheet").hidden) openOverleg(); }
+    finally { if ($("#paneel") && $("#paneel").querySelector(".ov-stappen") && !$("#sheet").hidden) openOverleg(); else if (S.tab === "vandaag" && b.closest(".duimkaart")) render(); }
   });
 }, true);
 </script>
