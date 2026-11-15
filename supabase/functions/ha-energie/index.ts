@@ -12,6 +12,7 @@
 //       { actie: "historiek", dag?: "gisteren" }  → net, zon en wagen per kwartier (HA-statistieken); gisteren ook de prijzen
 //       { actie: "laadmodus", modus: "smart"|"now"|"off" }  → buiten een actief tijdsvenster enkel onthouden
 //       { actie: "venster", actief, van: "22:00", tot: "07:00" } → tijdsvenster instellen en meteen toepassen
+//       { actie: "altijd", waarde: "on"|"off" }     → Slim met "Altijd laden" (min 6 A, zon extra) (rest_command.kring_evcc_alwayscharge)
 //       { actie: "stroom", ampere: 6..16 }         → maximale laadstroom (rest_command.kring_evcc_maxcurrent)
 //       { actie: "toch", uren: n|null|0, modus }   → buiten het venster toch laden (n uur, null = tot het venster begint, 0 = stoppen)
 //       { actie: "tick", token }                   → pg_cron: vensters toepassen bij een overgang, en buiten het venster
@@ -230,6 +231,13 @@ Deno.serve(async (req) => {
       await rpc(auth, "laadvenster_toch", { p_uren: uren });   // weigert tieners en kinderen
       if (uren === 0) { const t = await tickToken(); if (t) await vensterToepassen(t); }   // stoppen: bewaking zet meteen op Uit
       else await haDienst("kring_evcc_mode", { mode: m });
+      await new Promise((r) => setTimeout(r, 800));
+      return antwoord(await statusVoor(auth, true));
+    }
+    if (actie === "altijd") {
+      const w = body.waarde === "on" ? "on" : "off";
+      await rpc(auth, "energie_registreer", { p_actie: "altijd laden", p_waarde: w });   // weigert tieners en kinderen
+      await haDienst("kring_evcc_alwayscharge", { waarde: w });
       await new Promise((r) => setTimeout(r, 800));
       return antwoord(await statusVoor(auth, true));
     }
