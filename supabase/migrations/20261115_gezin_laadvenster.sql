@@ -103,3 +103,83 @@ begin
   if p_actie not in ('laadmodus', 'laadstroom') then raise exception 'Onbekende actie'; end if;
   insert into gezin.energie_log (huishouden_id, actie, waarde) values ((t->>'huishouden')::uuid, p_actie, left(p_waarde, 40));
 end; $$;
+
+-- ===== Bewaking en "Toch laden" (zelfde dag toegevoegd) =====
+-- Buiten het venster kijkt Kring om de 5 minuten of evcc nog op Uit staat en zet het anders terug.
+-- Bewust buiten het venster laden gaat via "Toch laden" in Kring: dan laat Kring de paal met rust tot uitzondering_tot.
+alter table gezin.laadvenster
+  add column uitzondering_tot  timestamptz,
+  add column uitzondering_door uuid,
+  add column laatste_controle  timestamptz;
+
+drop function gezin.laadvenster_te_doen(text);
+create function gezin.laadvenster_te_doen(p_token text)
+returns table (huishouden_id uuid, modus text, binnen boolean, controle boolean)
+language plpgsql security definer set search_path = '' as $$
+begin
+  if not exists (select 1 from gezin.laadvenster_tick k where k.token = p_token) then raise exception 'Ongeldig token'; end if;
+  return query
+  select v.huishouden_id, v.modus, b.binnen,
+         (v.status is not distinct from (case when b.binnen then 'binnen' else 'buiten' end))
+    from gezin.laadvenster v
+    join gezin.energie_koppeling k on k.huishouden_id = v.huishouden_id and k.actief
+    cross join lateral (select gezin.laadvenster_binnen(v.van, v.tot) as binnen) b
+   where v.actief and (v.uitzondering_tot is null or v.uitzondering_tot <= now())
+     and (v.status is distinct from (case when b.binnen then 'binnen' else 'buiten' end)
+          or (not b.binnen and (v.laatste_controle is null or v.laatste_controle < now() - interval '4 minutes 30 seconds')));
+end; $$;
+revoke all on function gezin.laadvenster_te_doen(text) from public, anon, authenticated;
+grant execute on function gezin.laadvenster_te_doen(text) to service_role;
+
+create or replace function gezin.laadvenster_toegepast(p_huishouden uuid, p_status text)
+returns void language sql security definer set search_path = '' as $$
+  update gezin.laadvenster set status = p_status, laatste_poging = now(), laatste_controle = now(),
+         uitzondering_tot = case when uitzondering_tot <= now() then null else uitzondering_tot end
+   where huishouden_id = p_huishouden;
+$$;
+
+create function gezin.laadvenster_toch(p_uren numeric)
+returns timestamptz language plpgsql security definer set search_path = '' as $$
+declare t jsonb := gezin.energie_toegang(); v gezin.laadvenster; tot_ts timestamptz;
+begin
+  if not coalesce((t->>'sturen')::boolean, false) then raise exception 'Geen toegang om de laadpaal te sturen'; end if;
+  select * into v from gezin.laadvenster where huishouden_id = (t->>'huishouden')::uuid;
+  if v is null or not v.actief then raise exception 'Er is geen laadvenster actief'; end if;
+  if p_uren = 0 then tot_ts := null;
+  elsif p_uren is null then
+    tot_ts := ((now() at time zone 'Europe/Brussels')::date + v.van) at time zone 'Europe/Brussels';
+    if tot_ts <= now() then tot_ts := tot_ts + interval '1 day'; end if;
+  else tot_ts := now() + make_interval(mins => least(greatest(p_uren, 0.5), 24) * 60); end if;
+  update gezin.laadvenster set uitzondering_tot = tot_ts, uitzondering_door = auth.uid(), status = null, laatste_poging = null
+   where huishouden_id = v.huishouden_id;
+  insert into gezin.energie_log (huishouden_id, actie, waarde)
+  values (v.huishouden_id, 'toch laden', coalesce(to_char(tot_ts at time zone 'Europe/Brussels', 'DD/MM HH24:MI'), 'gestopt'));
+  return tot_ts;
+end; $$;
+revoke all on function gezin.laadvenster_toch(numeric) from public, anon;
+grant execute on function gezin.laadvenster_toch(numeric) to authenticated;
+
+create or replace function gezin.laadvenster_cron()
+returns void language plpgsql security definer set search_path = '' as $$
+declare k record;
+begin
+  if not exists (
+    select 1 from gezin.laadvenster v cross join lateral (select gezin.laadvenster_binnen(v.van, v.tot) as binnen) b
+     where v.actief and (v.uitzondering_tot is null or v.uitzondering_tot <= now())
+       and (v.laatste_poging is null or v.laatste_poging < now() - interval '50 seconds')
+       and (v.status is distinct from (case when b.binnen then 'binnen' else 'buiten' end)
+            or (not b.binnen and (v.laatste_controle is null or v.laatste_controle < now() - interval '4 minutes 30 seconds')))) then return; end if;
+  select * into k from gezin.laadvenster_tick where id = 1;
+  if k is null then return; end if;
+  update gezin.laadvenster set laatste_poging = now() where actief;
+  perform net.http_post(url := k.url, body := jsonb_build_object('actie', 'tick', 'token', k.token),
+                        headers := jsonb_build_object('Content-Type', 'application/json', 'apikey', k.apikey));
+end; $$;
+revoke all on function gezin.laadvenster_cron() from public, anon, authenticated;
+
+create function gezin.laadvenster_bewaakt(p_huishouden uuid, p_was text)
+returns void language sql security definer set search_path = '' as $$
+  insert into gezin.energie_log (huishouden_id, user_id, actie, waarde) values (p_huishouden, '00000000-0000-0000-0000-000000000000', 'bewaking', 'stond op ' || left(p_was, 20) || ', terug op Uit');
+$$;
+revoke all on function gezin.laadvenster_bewaakt(uuid, text) from public, anon, authenticated;
+grant execute on function gezin.laadvenster_bewaakt(uuid, text) to service_role;

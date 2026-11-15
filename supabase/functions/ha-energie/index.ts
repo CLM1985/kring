@@ -13,7 +13,9 @@
 //       { actie: "laadmodus", modus: "smart"|"now"|"off" }  → buiten een actief tijdsvenster enkel onthouden
 //       { actie: "venster", actief, van: "22:00", tot: "07:00" } → tijdsvenster instellen en meteen toepassen
 //       { actie: "stroom", ampere: 6..16 }         → maximale laadstroom (rest_command.kring_evcc_maxcurrent)
-//       { actie: "tick", token }                   → pg_cron: vensters toepassen bij een overgang
+//       { actie: "toch", uren: n|null|0, modus }   → buiten het venster toch laden (n uur, null = tot het venster begint, 0 = stoppen)
+//       { actie: "tick", token }                   → pg_cron: vensters toepassen bij een overgang, en buiten het venster
+//                                                     om de 5 min nakijken of evcc nog op Uit staat (bewaking)
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -145,7 +147,7 @@ function historiek(dag: string): Promise<{ van: number; tot: number; net: [numbe
 }
 
 async function vensterLees(auth: string) {
-  const r = await fetch(`${SB_URL}/rest/v1/laadvenster?select=actief,van,tot,modus,status`, { headers: { apikey: SB_ANON, Authorization: auth, "Accept-Profile": "gezin" } });
+  const r = await fetch(`${SB_URL}/rest/v1/laadvenster?select=actief,van,tot,modus,status,uitzondering_tot`, { headers: { apikey: SB_ANON, Authorization: auth, "Accept-Profile": "gezin" } });
   const j = r.ok ? await r.json() : [];
   const v = j[0];
   if (!v) return { actief: false, van: "22:00", tot: "07:00", modus: "smart", binnen: true };
@@ -162,9 +164,17 @@ async function statusVoor(auth: string, sturen: boolean) {
 // Pas de vensters toe die een overgang hebben (aangeroepen door pg_cron of na een wijziging)
 async function vensterToepassen(token: string) {
   const svc = `Bearer ${SB_SERVICE}`;
-  const rijen = await rpc(svc, "laadvenster_te_doen", { p_token: token }, SB_SERVICE) as { huishouden_id: string; modus: string; binnen: boolean }[];
+  const rijen = await rpc(svc, "laadvenster_te_doen", { p_token: token }, SB_SERVICE) as { huishouden_id: string; modus: string; binnen: boolean; controle: boolean }[];
   for (const v of rijen || []) {
-    await haDienst("kring_evcc_mode", { mode: v.binnen ? v.modus : "off" });
+    if (v.controle) {
+      // Bewaking: buiten het venster moet evcc op Uit staan (bewust laden gaat via "Toch laden" in Kring)
+      const nu = await haDienst("kring_evcc_state");
+      const modusNu = ((nu?.result || nu || {}).loadpoints || [])[0]?.mode;
+      if (modusNu && modusNu !== "off") {
+        await haDienst("kring_evcc_mode", { mode: "off" });
+        await rpc(svc, "laadvenster_bewaakt", { p_huishouden: v.huishouden_id, p_was: modusNu }, SB_SERVICE);
+      }
+    } else await haDienst("kring_evcc_mode", { mode: v.binnen ? v.modus : "off" });
     await rpc(svc, "laadvenster_toegepast", { p_huishouden: v.huishouden_id, p_status: v.binnen ? "binnen" : "buiten" }, SB_SERVICE);
   }
   return (rijen || []).length;
@@ -198,7 +208,8 @@ Deno.serve(async (req) => {
       if (modus !== "off") await rpc(auth, "laadvenster_modus", { p_modus: modus });
       const v = await vensterLees(auth);
       let melding = "";
-      if (v.actief && !v.binnen && modus !== "off") melding = `Buiten het laadvenster: laadt vanaf ${v.van} in deze modus.`;
+      const toch = v.uitzondering_tot && new Date(v.uitzondering_tot) > new Date();
+      if (v.actief && !v.binnen && !toch && modus !== "off") melding = `Buiten het laadvenster: laadt vanaf ${v.van} in deze modus.`;
       else { await haDienst("kring_evcc_mode", { mode: modus }); await new Promise((r) => setTimeout(r, 800)); }
       return antwoord({ ...(await statusVoor(auth, true)), melding });
     }
@@ -209,6 +220,16 @@ Deno.serve(async (req) => {
       const v = await vensterLees(auth);
       if (v.actief) { const t = await tickToken(); if (t) await vensterToepassen(t); }
       else await haDienst("kring_evcc_mode", { mode: v.modus });   // venster uit: laden volgens de gekozen modus
+      await new Promise((r) => setTimeout(r, 800));
+      return antwoord(await statusVoor(auth, true));
+    }
+    if (actie === "toch") {
+      const uren = body.uren === null ? null : Number(body.uren);
+      if (uren !== null && !(uren >= 0 && uren <= 24)) return antwoord({ fout: "Ongeldige duur" }, 400);
+      const m = body.modus === "smart" ? "smart" : "now";
+      await rpc(auth, "laadvenster_toch", { p_uren: uren });   // weigert tieners en kinderen
+      if (uren === 0) { const t = await tickToken(); if (t) await vensterToepassen(t); }   // stoppen: bewaking zet meteen op Uit
+      else await haDienst("kring_evcc_mode", { mode: m });
       await new Promise((r) => setTimeout(r, 800));
       return antwoord(await statusVoor(auth, true));
     }

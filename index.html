@@ -4577,6 +4577,7 @@ body:not(.breed) .en-grafiek{order:9}
 .en-venster{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:6px}
 .en-venster label{display:inline-flex;align-items:center;gap:6px;font-size:.9rem}
 .en-venster select{width:auto;padding:6px 8px}
+.en-toch{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px;font-size:.88rem}
 .en-sug{display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center;background:var(--sunk);border-radius:10px;padding:8px 10px;margin-top:8px;font-size:.88rem}
 .en-sug-acties{display:inline-flex;gap:6px;align-items:center}
 .en-sug-acties select{width:auto;padding:4px 6px}
@@ -4749,11 +4750,15 @@ window.EN_LOCAL = {
     return { ...enDemoMetA(enDemoStatus(e.modus), e), venster: enDemoVenster(e), melding: buiten && m !== "off" ? `Buiten het laadvenster: laadt vanaf ${v.van} in deze modus.` : "" }; },
   async zetVenster(actief, van, tot) { const e = this.d.energie = { ...(this.d.energie || {}) }; e.venster = { actief, van, tot };
     e.modus = actief && !enBinnen(van, tot) ? "off" : (e.vmodus || "smart"); this.save(); return { ...enDemoMetA(enDemoStatus(e.modus), e), venster: enDemoVenster(e) }; },
+  async zetToch(uren) { const e = this.d.energie = { ...(this.d.energie || {}) }, v = e.venster || {};
+    if (uren === 0) { e.toch = null; e.modus = "off"; }
+    else { let t; if (uren == null) { t = new Date(); const [h, m] = (v.van || "22:00").split(":"); t.setHours(+h, +m, 0, 0); if (t <= new Date()) t.setDate(t.getDate() + 1); } else t = new Date(Date.now() + uren * 3600e3); e.toch = t.toISOString(); e.modus = "now"; }
+    this.save(); return { ...enDemoMetA(enDemoStatus(e.modus), e), venster: enDemoVenster(e) }; },
   async zetStroom(a) { const e = this.d.energie = { ...(this.d.energie || {}), ampere: a }; this.save(); const st = enDemoStatus(e.modus || "smart"); st.laadpunt.ingesteldA = a; return { ...st, venster: enDemoVenster(e) }; }
 };
 const enBinnen = (van, tot, nu = new Date()) => { const t = nu.toTimeString().slice(0, 5); return van === tot ? true : van < tot ? t >= van && t < tot : t >= van || t < tot; };
 function enDemoMetA(st, e) { if (e.ampere) st.laadpunt.ingesteldA = e.ampere; return st; }
-function enDemoVenster(e) { const v = e.venster || { actief: false, van: "22:00", tot: "07:00" }; return { ...v, modus: e.vmodus || "smart", binnen: enBinnen(v.van, v.tot) }; }
+function enDemoVenster(e) { const v = e.venster || { actief: false, van: "22:00", tot: "07:00" }; return { ...v, modus: e.vmodus || "smart", binnen: enBinnen(v.van, v.tot), uitzondering_tot: e.toch || null }; }
 window.EN_SUPA = {
   async enRoep(body) {
     const { data, error } = await this.sb.functions.invoke("ha-energie", { body });
@@ -4764,7 +4769,8 @@ window.EN_SUPA = {
   async loadEnergie(actie, extra) { return this.enRoep({ actie, ...(extra || {}) }); },
   async zetLaadmodus(m) { return this.enRoep({ actie: "laadmodus", modus: m }); },
   async zetVenster(actief, van, tot) { return this.enRoep({ actie: "venster", actief, van, tot }); },
-  async zetStroom(a) { return this.enRoep({ actie: "stroom", ampere: a }); }
+  async zetStroom(a) { return this.enRoep({ actie: "stroom", ampere: a }); },
+  async zetToch(uren) { return this.enRoep({ actie: "toch", uren, modus: "now" }); }
 };
 
 const EN_MODI = [["off", "Uit"], ["smart", "Slim"], ["now", "Snel"]];
@@ -4838,12 +4844,18 @@ function enVensterHtml(s) {
   const sug = KringEnergie.besteVenster(s, uren, kw);
   const opt = sel => [...Array(24)].map((_, h) => { const t = String(h).padStart(2, "0") + ":00"; return `<option value="${t}" ${t === sel ? "selected" : ""}>${t}</option>`; }).join("");
   const modusNaam = v.modus === "now" ? "Snel" : "Slim";
-  const st = !v.actief ? "Geen venster: de laadpaal volgt de gekozen modus." : v.binnen ? `Binnen het venster tot ${v.tot}: laadt in ${modusNaam}.` : `Buiten het venster: staat op Uit, laadt vanaf ${v.van} in ${modusNaam}.`;
+  const toch = v.uitzondering_tot && new Date(v.uitzondering_tot) > new Date() ? new Date(v.uitzondering_tot) : null;
+  const tochUur = toch ? toch.toLocaleTimeString("nl-BE", { hour: "2-digit", minute: "2-digit" }) : "";
+  const st = !v.actief ? "Geen venster: de laadpaal volgt de gekozen modus." : v.binnen ? `Binnen het venster tot ${v.tot}: laadt in ${modusNaam}.`
+    : toch ? (toch.toTimeString().slice(0, 5) === v.van ? `Toch laden tot het venster om ${v.van} begint; daarna laadt hij in ${modusNaam}.` : `Toch laden tot ${tochUur}. Daarna gaat de paal weer op Uit tot ${v.van}.`) : `Buiten het venster: staat op Uit, laadt vanaf ${v.van} in ${modusNaam}. Kring houdt de paal op Uit, ook als hij elders aangezet wordt.`;
   const dis = s.magSturen ? "" : "disabled";
   return `<div class="en-sub-blok"><div class="en-sub-kop"><b>Laadvenster</b><label class="en-schakel"><input type="checkbox" id="en-v-aan" ${v.actief ? "checked" : ""} ${dis}> aan</label></div>
     <div class="en-venster"><label>van <select class="in" id="en-v-van" ${dis}>${opt(v.van)}</select></label><label>tot <select class="in" id="en-v-tot" ${dis}>${opt(v.tot)}</select></label>
       <button class="knop klein" data-envenster ${dis}>Opslaan</button></div>
     <p class="en-uitleg">${st}</p>
+    ${v.actief && !v.binnen && s.magSturen ? `<div class="en-toch">${toch
+      ? `<button class="knop sec klein" data-entoch="0">Stoppen met laden</button>`
+      : `<span>⚡ <b>Toch laden</b> (Snel):</span>${[[1, "1 u"], [2, "2 u"], [4, "4 u"], ["venster", "tot " + v.van]].map(([k, l]) => `<button class="knop sec klein" data-entoch="${k}">${l}</button>`).join("")}`}</div>` : ""}
     ${sug ? `<div class="en-sug"><span>💡 <b>Suggestie</b> (prijzen en zon uit evcc), ${uren} u laden:
         <b>${enUur(sug.van)}–${enUur(sug.tot)}</b>${enDag(sug.van) ? " " + enDag(sug.van).trim() : ""} · gem. ${enCt(sug.gemiddeld)}/kWh${sug.zonAandeel > 0.1 ? ` · ${Math.round(sug.zonAandeel * 100)} % zon` : ""}</span>
       <span class="en-sug-acties"><select class="in" id="en-v-uren" aria-label="Hoe lang laden">${[2, 3, 4, 5, 6, 8].map(u => `<option value="${u}" ${u === uren ? "selected" : ""}>${u} u</option>`).join("")}</select>
@@ -5019,6 +5031,9 @@ document.addEventListener("click", ev => {
   const am = ev.target.closest("[data-enampere]");
   if (am) { const e = S.en || {}, a = +am.dataset.enampere; if (!e.status || !e.status.magSturen) return;
     run(async () => { try { e.status = await db.zetStroom(a); e.t = Date.now(); toast(`Laadstroom: max ${a} A`); } finally { if (S.tab === "energie") viewEnergie(); } }); return; }
+  const tc = ev.target.closest("[data-entoch]");
+  if (tc) { const e = S.en || {}; if (!e.status || !e.status.magSturen) return; const k = tc.dataset.entoch, uren = k === "venster" ? null : +k;
+    run(async () => { try { e.status = await db.zetToch(uren); e.t = Date.now(); toast(uren === 0 ? "Gestopt: de paal staat weer op Uit" : "Toch laden gestart (Snel)"); } finally { if (S.tab === "energie") viewEnergie(); } }); return; }
   const sg = ev.target.closest("[data-ensug]");
   if (sg) { const [van, tot] = sg.dataset.ensug.split("|"); const a = $("#en-v-van"), b = $("#en-v-tot"), c = $("#en-v-aan");
     if (a) a.value = van; if (b) b.value = tot; if (c) c.checked = true; toast("Suggestie ingevuld. Tik op Opslaan."); return; }
