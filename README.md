@@ -23,6 +23,7 @@ Vandaag · Agenda · Eten (weekmenu, gerechten, boodschappen/bestellijst, diepvr
 | `supabase/functions/ics-ophalen` | Externe ICS-agenda ophalen (JWT verplicht) |
 | `supabase/migrations/20261114_gezin_taak_duim.sql` | Duimpje omhoog/omlaag per taak (voorkomen), enkel voor ouders (beheerder, lid); tieners en kinderen zien niets |
 | `supabase/migrations/20261114_gezin_energie.sql` | Energie: welk gezin bij de Home Assistant hoort, wie de laadmodus mag wijzigen (beheerder, lid), logboek |
+| `supabase/migrations/20261115_gezin_wagens.sql` | Wagens op de energiepagina: naam in evcc, HA-sensoren voor batterij/bereik, foto (ouders wijzigen ze in de app) |
 | `supabase/functions/ha-energie` | Energiepagina: evcc lezen en laadmodus Uit/Slim/Snel zetten via Home Assistant (JWT verplicht; HA-token enkel als geheim) |
 | `supabase/functions/agenda-feed` | Kring-agenda als ICS-feed voor Google/iPhone (zonder JWT, geheime token) |
 
