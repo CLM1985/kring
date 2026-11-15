@@ -4855,7 +4855,7 @@ function enVensterHtml(s) {
     <p class="en-uitleg">${st}</p>
     ${v.actief && !v.binnen && s.magSturen ? `<div class="en-toch">${toch
       ? `<button class="knop sec klein" data-entoch="0">Stoppen met laden</button>`
-      : `<span>⚡ <b>Toch laden</b> (Snel):</span>${[[1, "1 u"], [2, "2 u"], [4, "4 u"], ["venster", "tot " + v.van]].map(([k, l]) => `<button class="knop sec klein" data-entoch="${k}">${l}</button>`).join("")}`}</div>` : ""}
+      : `<span>⚡ <b>Toch laden</b> (Snel):</span>${[[1, "1 u"], [2, "2 u"], [4, "4 u"], [8, "8 u"], [12, "12 u"], ["venster", "tot " + v.van]].map(([k, l]) => `<button class="knop sec klein" data-entoch="${k}">${l}</button>`).join("")}`}</div>` : ""}
     ${sug ? `<div class="en-sug"><span>💡 <b>Suggestie</b> (prijzen en zon uit evcc), ${uren} u laden:
         <b>${enUur(sug.van)}–${enUur(sug.tot)}</b>${enDag(sug.van) ? " " + enDag(sug.van).trim() : ""} · gem. ${enCt(sug.gemiddeld)}/kWh${sug.zonAandeel > 0.1 ? ` · ${Math.round(sug.zonAandeel * 100)} % zon` : ""}</span>
       <span class="en-sug-acties"><select class="in" id="en-v-uren" aria-label="Hoe lang laden">${[2, 3, 4, 5, 6, 8].map(u => `<option value="${u}" ${u === uren ? "selected" : ""}>${u} u</option>`).join("")}</select>

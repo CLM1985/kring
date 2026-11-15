@@ -77,6 +77,6 @@ Geen persoonlijke data in deze publieke repo: geen recepten, producten, tickets 
       timeout: 10
   ```
 - **Laadvenster:** tabel `gezin.laadvenster`; pg_cron-job `laadvenster` (elke minuut) roept bij een overgang `ha-energie` aan met `actie: "tick"` en het token uit `gezin.laadvenster_tick`. Daarom draait `ha-energie` zonder JWT-controle aan de poort (`--no-verify-jwt`); de functie controleert zelf.
-  Buiten het venster kijkt de bewaking om de 5 minuten of evcc op Uit staat en zet het anders terug (logregel `bewaking`). Bewust laden buiten het venster: knop **Toch laden** (1, 2 of 4 u, of tot het venster begint), opgeslagen in `uitzondering_tot`.
+  Buiten het venster kijkt de bewaking om de 5 minuten of evcc op Uit staat en zet het anders terug (logregel `bewaking`). Bewust laden buiten het venster: knop **Toch laden** (1, 2, 4, 8 of 12 u, of tot het venster begint), opgeslagen in `uitzondering_tot`.
 - **Toegang:** lezen voor elk lid van het gezin in `gezin.energie_koppeling`; de laadmodus wijzigen enkel voor beheerder en lid. Elke wijziging staat in `gezin.energie_log`.
 - **Advies per toestel:** programmaprofielen gemeten met de meetstekkers (4–14/11/2026), kwartierprijzen en injectie uit evcc (Frank), zonneverwachting uit evcc. Rekenregels in `KringEnergie` (index.html).
