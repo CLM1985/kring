@@ -8,7 +8,7 @@
 //   De functie controleert zelf: elke actie behalve "tick" gaat via gezin.energie_toegang() met het JWT van de gebruiker
 //   (zonder geldig JWT: geen toegang). "tick" komt van pg_cron (gezin.laadvenster_cron) met een geheim token.
 //
-// Body: { actie: "status" }                       → live, prijzen, zonneverwachting, laadpunt, tijdsvenster
+// Body: { actie: "status" }                       → live, prijzen, zonneverwachting, laadpunt, wagens, tijdsvenster
 //       { actie: "historiek", dag?: "gisteren" }  → net, zon en wagen per kwartier (HA-statistieken); gisteren ook de prijzen
 //       { actie: "laadmodus", modus: "smart"|"now"|"off" }  → buiten een actief tijdsvenster enkel onthouden
 //       { actie: "venster", actief, van: "22:00", tot: "07:00" } → tijdsvenster instellen en meteen toepassen
@@ -83,7 +83,9 @@ async function evccStatus() {
       vermogen: rond(lp.chargePower), sessieKwh: rond((lp.sessionEnergy || 0) / 1000, 2), sessieDuurMin: rond((lp.chargeDuration || 0) / 60),
       wagen: lp.vehicleTitle || lp.vehicleName || "", soc: lp.vehicleSoc || null, plan: !!lp.planActive, maxA: lp.effectiveMaxCurrent || null,
       ingesteldA: lp.maxCurrent || null, minA: lp.minCurrent || null, nuA: rond(lp.offeredCurrent, 1), fasen: lp.phasesActive || lp.phasesConfigured || 1,
+      resterendS: lp.charging ? rond(lp.chargeRemainingDuration) || null : null, limiet: rond(lp.effectiveLimitSoc) || null, bereik: rond(lp.vehicleRange) || null,
     },
+    voertuigen: Object.values(s.vehicles || {}).map((v) => (v as { title?: string }).title).filter(Boolean) as string[],
     // [start (s), eind (s), €/kWh] per kwartier
     prijzen: (f.grid || []).map((p: number[]) => [p[0], p[1], rond(p[2], 4)]),
     injectie: (f.feedin || []).map((p: number[]) => [p[0], p[1], rond(p[2], 4)]),
@@ -159,9 +161,34 @@ function binnenVenster(van: string, tot: string, op = new Date()) {
   const nu = op.toLocaleTimeString("en-GB", { timeZone: "Europe/Brussels", hour12: false }).slice(0, 5), a = van.slice(0, 5), b = tot.slice(0, 5);
   return a === b ? true : a < b ? nu >= a && nu < b : nu >= a || nu < b;
 }
+// Wagens: de voertuigen uit evcc, aangevuld met gezin.wagens (naam, HA-sensoren). Batterij en bereik komen uit evcc
+// als de wagen aan de laadpaal hangt, anders uit de HA-sensoren (bv. de Volvo-integratie). De foto haalt de app zelf op.
+type Wagen = { evcc: string; soc: number | null; bereik: number | null; aanPaal: boolean; laadt: boolean; vermogen: number | null; resterendS: number | null; limiet: number | null };
+async function haWaarde(id: string | null) {
+  if (!id || !/^sensor\.[a-z0-9_]+$/.test(id)) return null;
+  try {
+    const r = await fetch(`${HA_URL}/api/states/${id}`, { headers: { Authorization: `Bearer ${HA_TOKEN}` }, signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return null;
+    const v = parseFloat((await r.json()).state);
+    return isFinite(v) ? v : null;
+  } catch { return null; }
+}
+async function wagensLees(auth: string, st: Awaited<ReturnType<typeof evccStatus>>): Promise<Wagen[]> {
+  const r = await fetch(`${SB_URL}/rest/v1/wagens?select=evcc_titel,soc_sensor,bereik_sensor,volgorde&order=volgorde`, { headers: { apikey: SB_ANON, Authorization: auth, "Accept-Profile": "gezin" } });
+  const cfg = (r.ok ? await r.json() : []) as { evcc_titel: string; soc_sensor: string | null; bereik_sensor: string | null }[];
+  const namen = [...cfg.map((c) => c.evcc_titel), ...st.voertuigen.filter((t) => !cfg.some((c) => c.evcc_titel === t))];
+  const lp = st.laadpunt;
+  return Promise.all(namen.map(async (evcc) => {
+    const c = cfg.find((x) => x.evcc_titel === evcc);
+    const aanPaal = lp.verbonden && lp.wagen === evcc, laadt = aanPaal && lp.laadt;
+    const [soc, bereik] = aanPaal && lp.soc ? [lp.soc, lp.bereik] : await Promise.all([haWaarde(c?.soc_sensor || null), haWaarde(c?.bereik_sensor || null)]);
+    return { evcc, soc: rond(soc), bereik: rond(bereik), aanPaal, laadt, vermogen: laadt ? lp.vermogen : null, resterendS: laadt ? lp.resterendS : null, limiet: aanPaal ? lp.limiet : null };
+  }));
+}
 async function statusVoor(auth: string, sturen: boolean) {
   const [st, venster] = await Promise.all([evccStatus(), vensterLees(auth)]);
-  return { ...st, venster, magSturen: sturen };
+  const wagens = await wagensLees(auth, st).catch(() => [] as Wagen[]);
+  return { ...st, wagens, venster, magSturen: sturen };
 }
 // Pas de vensters toe die een overgang hebben (aangeroepen door pg_cron of na een wijziging)
 async function vensterToepassen(token: string) {

@@ -4664,6 +4664,24 @@ body:not(.breed) .en-grafiek{order:9}
 .en-laad .en-st{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-variant-numeric:tabular-nums}
 .en-laad .en-uitleg{font-size:.85rem;color:var(--muted);margin:0}
 .en-sub-blok{border-top:1px solid var(--line);margin-top:12px;padding-top:10px}
+.en-wagens{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px}
+.en-wagen{position:relative;border:2px solid var(--line);border-radius:var(--r);padding:8px;background:var(--surface);min-width:0}
+.en-wagen.laadt{border-color:#30a46c}
+.en-wagen .en-foto{background:linear-gradient(#f4f5f7,#e1e4e8);border-radius:calc(var(--r) - 4px);aspect-ratio:2.2/1;display:flex;align-items:center;justify-content:center;overflow:hidden;font-size:2.4rem}
+.en-wagen .en-foto img{width:100%;height:100%;object-fit:contain}
+.en-wagen .en-naam{font-weight:700;margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.en-wagen .en-pct{font-family:var(--font-display);font-size:1.6rem;font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums}
+.en-wagen .en-pct small{font-size:.8rem;font-weight:400;color:var(--muted);margin-left:6px}
+.en-wagen .en-batt{height:7px;border-radius:4px;background:var(--sunk);overflow:hidden;margin:5px 0 6px}
+.en-wagen .en-batt div{height:100%;border-radius:4px;transition:width .6s}
+.en-wagen.laadt .en-batt div{background-image:linear-gradient(45deg,rgba(255,255,255,.35) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.35) 50%,rgba(255,255,255,.35) 75%,transparent 75%);background-size:14px 14px;animation:en-stroom 1s linear infinite}
+@keyframes en-stroom{to{background-position:14px 0}}
+@media (prefers-reduced-motion:reduce){.en-wagen.laadt .en-batt div{animation:none}}
+.en-wagen .en-w-st{display:flex;justify-content:space-between;gap:6px;flex-wrap:wrap;font-size:.86rem;font-variant-numeric:tabular-nums}
+.en-wagen .en-w-st b{color:#30a46c}
+.en-wagen .en-w-sub{font-size:.78rem;color:var(--muted)}
+.en-wagen .en-fotoknop{position:absolute;top:12px;right:12px;font-size:.75rem;background:rgba(255,255,255,.85);color:#15171c;border-radius:99px;padding:2px 8px;cursor:pointer}
+.en-wagen .en-fotoknop input{display:none}
 .en-sub-kop{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:6px}
 .en-laad .seg.en-klein button{padding:7px 4px;font-size:.88rem}
 .en-schakel{display:inline-flex;align-items:center;gap:6px;font-size:.9rem}
@@ -4828,6 +4846,8 @@ function enDemoStatus(modus) {
   return { tijd: new Date().toISOString(), magSturen: true,
     live: { zon: z, huis: 420, wagen, net: 420 + wagen - z, prijs: prijzen[Math.floor(u * 4)][2], injectie: injectie[Math.floor(u * 4)][2], netLimiet: 4500 },
     laadpunt: { titel: "Laadpaal", modus, altijdLaden: "off", verbonden: true, laadt: wagen > 0, vermogen: wagen, sessieKwh: 4.2, sessieDuurMin: 75, wagen: "", soc: null, plan: false, maxA: 16, ingesteldA: 16, fasen: 1 },
+    wagens: [{ evcc: "Wagen A", soc: 46, bereik: 190, aanPaal: true, laadt: wagen > 0, vermogen: wagen || null, resterendS: wagen > 0 ? Math.round(37 / (wagen / 1000) * 3600) : null, limiet: 100 },
+      { evcc: "Wagen B", soc: 72, bereik: null, aanPaal: false, laadt: false, vermogen: null, resterendS: null, limiet: null }],
     prijzen, injectie, zon, zonKwh: { vandaag: 9.4, morgen: 6.1 } };
 }
 function enDemoHist(gisteren) {
@@ -4853,7 +4873,9 @@ window.EN_LOCAL = {
     if (uren === 0) { e.toch = null; e.modus = "off"; }
     else { let t; if (uren == null) { t = new Date(); const [h, m] = (v.van || "22:00").split(":"); t.setHours(+h, +m, 0, 0); if (t <= new Date()) t.setDate(t.getDate() + 1); } else t = new Date(Date.now() + uren * 3600e3); e.toch = t.toISOString(); e.modus = "now"; }
     this.save(); return { ...enDemoMetA(enDemoStatus(e.modus), e), venster: enDemoVenster(e) }; },
-  async zetStroom(a) { const e = this.d.energie = { ...(this.d.energie || {}), ampere: a }; this.save(); const st = enDemoStatus(e.modus || "smart"); st.laadpunt.ingesteldA = a; return { ...st, venster: enDemoVenster(e) }; }
+  async zetStroom(a) { const e = this.d.energie = { ...(this.d.energie || {}), ampere: a }; this.save(); const st = enDemoStatus(e.modus || "smart"); st.laadpunt.ingesteldA = a; return { ...st, venster: enDemoVenster(e) }; },
+  async loadWagens() { const f = (this.d.energie || {}).fotos || {}; return [{ id: "w1", naam: "Wagen A", evcc_titel: "Wagen A", foto: f.w1 || null, volgorde: 1 }, { id: "w2", naam: "Wagen B", evcc_titel: "Wagen B", foto: f.w2 || null, volgorde: 2 }]; },
+  async zetWagenFoto(id, foto) { const e = this.d.energie = { ...(this.d.energie || {}) }; e.fotos = { ...(e.fotos || {}), [id]: foto }; this.save(); }
 };
 const enBinnen = (van, tot, nu = new Date()) => { const t = nu.toTimeString().slice(0, 5); return van === tot ? true : van < tot ? t >= van && t < tot : t >= van || t < tot; };
 function enDemoMetA(st, e) { const lp = st.laadpunt; if (e.ampere) lp.ingesteldA = e.ampere; lp.minA = e.minA || 6; lp.altijdLaden = e.altijd ? "on" : "off";
@@ -4873,7 +4895,9 @@ window.EN_SUPA = {
   async zetStroom(a) { return this.enRoep({ actie: "stroom", ampere: a }); },
   async zetToch(uren) { return this.enRoep({ actie: "toch", uren, modus: "now" }); },
   async zetAltijd(aan) { return this.enRoep({ actie: "altijd", waarde: aan ? "on" : "off" }); },
-  async zetMinStroom(a) { return this.enRoep({ actie: "minstroom", ampere: a }); }
+  async zetMinStroom(a) { return this.enRoep({ actie: "minstroom", ampere: a }); },
+  async loadWagens() { return this.ok(await this.g.from("wagens").select("id, naam, evcc_titel, foto, volgorde").eq("huishouden_id", this.h).order("volgorde")); },
+  async zetWagenFoto(id, foto) { this.ok(await this.g.from("wagens").update({ foto }).eq("id", id).eq("huishouden_id", this.h)); }
 };
 
 const EN_MODI = [["off", "Uit"], ["smart", "Slim"], ["now", "Snel"]];
@@ -4890,6 +4914,7 @@ async function herlaadEnergie(metHist) {
     const [st, hi] = await Promise.all([db.loadEnergie("status"), metHist || !e.hist || Date.now() - (e.histT || 0) > 5 * 60e3 ? db.loadEnergie("historiek").catch(x => { console.warn("historiek:", x); return e.hist || null; }) : null]);
     e.status = st; e.fout = null; e.t = Date.now();
     if (hi) { e.hist = hi; e.histT = Date.now(); }
+    if (!e.wagenCfg && db.loadWagens) e.wagenCfg = await db.loadWagens().catch(x => { console.warn("wagens:", x); return null; });
   } catch (x) { console.error(x); e.fout = x.message || String(x); }
   e.laden = false;
 }
@@ -4904,6 +4929,7 @@ function viewEnergie() {
   const laadSt = !lp.verbonden ? "Geen wagen aangesloten" : lp.laadt ? `Laadt aan ${enKw(lp.vermogen)} kW` : "Aangesloten, laadt nu niet";
   const modusUitleg = { off: "Laden staat uit, ook als de wagen aangesloten is.", smart: lp.altijdLaden === "on" ? `Laadt altijd minstens aan ${lp.minA || 6} A (±${enKw((lp.minA || 6) * 230)} kW); bij zon gaat het hoger.` : "Laadt alleen op zonne-overschot of goedkope kwartieren. Bij weinig zon laadt hij dus niet: zet dan Altijd laden aan.", now: `Laadt meteen op vol vermogen, binnen de grens van ${enKw(L.netLimiet || 4500)} kW voor het hele huis.` }[lp.modus] || "";
   const laad = `<section class="en-blok en-laad"><h3>${esc(lp.titel || "Laadpaal")}</h3>
+    ${enWagensHtml(s, e.wagenCfg)}
     <div class="en-st"><span>${laadSt}${lp.wagen ? " · " + esc(lp.wagen) : ""}${lp.soc ? " · " + Math.round(lp.soc) + " %" : ""}</span>${lp.verbonden && lp.sessieKwh ? `<span class="muted">${lp.sessieKwh.toLocaleString("nl-BE")} kWh deze sessie</span>` : ""}</div>
     <div class="seg" role="group" aria-label="Laadmodus">${EN_MODI.map(([k, l]) => `<button data-enmodus="${k}" aria-pressed="${lp.modus === k}" ${s.magSturen ? "" : "disabled"}>${l}</button>`).join("")}</div>
     <p class="en-uitleg">${s.magSturen ? modusUitleg : "Alleen volwassenen kunnen de laadmodus wijzigen. " + modusUitleg}</p>
@@ -4933,6 +4959,36 @@ function viewEnergie() {
         ${enKaartHtml(s, e.hist, adv)}</section>
     </div><div class="en-col">${laad}${advHtml}</div></div>`;
   enKaartHover();
+}
+
+/* Wagens: foto, batterij, vermogen en "vol om" per wagen. Live waarden uit ha-energie (evcc + HA-sensoren),
+   naam en foto uit gezin.wagens (ouders kunnen de foto wijzigen). Eén laadpaal: enkel de aangesloten wagen laadt. */
+const enDuur = sec => { const u = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60); return u ? `${u} u ${String(m).padStart(2, "0")}` : `${m} min`; };
+function enWagensHtml(s, cfg) {
+  const ws = s.wagens || []; if (!ws.length) return "";
+  const kaart = w => {
+    const c = (cfg || []).find(x => x.evcc_titel === w.evcc) || {}, pct = w.soc == null ? null : Math.round(w.soc);
+    const kl = pct == null ? "var(--muted)" : pct < 20 ? "#e5484d" : pct < 40 ? "#f5a524" : "#30a46c";
+    const st = w.laadt ? `<div class="en-w-st"><b>⚡ ${enKw(w.vermogen)} kW</b>${w.resterendS ? `<span>vol om ${enDag(Date.now() / 1000 + w.resterendS)}${enUur(Date.now() / 1000 + w.resterendS)}</span>` : ""}</div>
+        ${w.resterendS ? `<div class="en-w-sub">nog ${enDuur(w.resterendS)}${w.limiet && w.limiet < 100 ? ` · tot ${w.limiet} %` : ""}</div>` : ""}`
+      : `<div class="en-w-st"><span class="muted">${w.aanPaal ? "Aangesloten, laadt niet" : "Niet aan de laadpaal"}</span></div>`;
+    return `<div class="en-wagen${w.laadt ? " laadt" : ""}">
+      <div class="en-foto">${c.foto ? `<img src="${c.foto}" alt="">` : "🚗"}</div>
+      ${s.magSturen && c.id ? `<label class="en-fotoknop" title="Foto wijzigen">📷<input type="file" accept="image/*" data-enfoto="${c.id}"></label>` : ""}
+      <div class="en-naam">${esc(c.naam || w.evcc)}</div>
+      <div class="en-pct" style="color:${kl}">${pct == null ? "–" : pct + " %"}${w.bereik ? `<small>${Math.round(w.bereik)} km</small>` : ""}</div>
+      <div class="en-batt"><div style="width:${pct || 0}%;background-color:${kl}"></div></div>${st}</div>`;
+  };
+  return `<div class="en-wagens">${ws.map(kaart).join("")}</div>`;
+}
+/* Foto verkleinen in de browser (max 640 px breed, webp) en bewaren */
+async function enFotoBewaar(id, f) {
+  if (!f || !/^image\//.test(f.type)) throw new Error("Kies een afbeelding");
+  const img = await createImageBitmap(f), sch = Math.min(1, 640 / img.width), c = document.createElement("canvas");
+  c.width = Math.round(img.width * sch); c.height = Math.round(img.height * sch); c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+  let url = c.toDataURL("image/webp", 0.8); if (!url.startsWith("data:image/webp")) url = c.toDataURL("image/jpeg", 0.85);
+  await db.zetWagenFoto(id, url);
+  const w = ((S.en || {}).wagenCfg || []).find(x => x.id === id); if (w) w.foto = url;
 }
 
 /* Laadstroom: maximale stroom van het laadpunt in evcc (enkelfasig: 6 A ≈ 1,4 kW … 16 A ≈ 3,7 kW) */
@@ -5182,6 +5238,8 @@ document.addEventListener("change", ev => {
   const t = ev.target;
   if (t && t.matches && t.matches("[data-enaltijd]")) { const e = S.en || {}; if (!e.status || !e.status.magSturen) return; const aan = t.checked;
     run(async () => { try { e.status = await db.zetAltijd(aan); e.t = Date.now(); toast(aan ? "Altijd laden aan" : "Altijd laden uit"); } finally { if (S.tab === "energie") viewEnergie(); } }); return; }
+  if (t && t.dataset && t.dataset.enfoto) { const f = t.files && t.files[0], id = t.dataset.enfoto; t.value = "";
+    run(async () => { await enFotoBewaar(id, f); toast("Foto bewaard"); if (S.tab === "energie") viewEnergie(); }); return; }
   if (!t || !t.id) return;
   if (t.id === "en-v-uren") { pref.set("laadUren", +t.value); viewEnergie(); }
   else if (["en-v-van", "en-v-tot", "en-v-aan"].includes(t.id) && S.en) S.en.bewerk = true;   // niet overschrijven door de automatische verversing
