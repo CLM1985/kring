@@ -6,6 +6,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Kring">
+<script>try { if (JSON.parse(localStorage.getItem("kring-pref-stijl")) === "nieuw") document.documentElement.dataset.stijl = "nieuw"; } catch (e) {}</script>
 <script>if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js"));</script>
 </head><body>
 
@@ -13,7 +14,7 @@
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Atkinson+Hyperlegible:wght@400;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Atkinson+Hyperlegible:wght@400;700&family=Inter:wght@400;500;600;700;800&display=swap">
 <style>
 /* Layout: één kolom, sticky kop met weekwissel, vaste tabbalk onderaan (gsm-eerst); op brede schermen weekmenu + receptenpaneel naast elkaar */
 :root{
@@ -392,14 +393,74 @@ details.voorraad[open] summary h3::after{content:"verbergen"}
 @media (prefers-reduced-motion:no-preference){.paneel{animation:op .18s ease-out}@keyframes op{from{transform:translateY(16px);opacity:.6}}}
 </style>
 
+<style id="stijl-nieuw">
+/* ===== Stijl "Nieuw" (promofilmpje): enkel kleuren, vormen en lettertype; indeling ongewijzigd. Aan via <html data-stijl="nieuw">. ===== */
+.merk-logo,.kop-avs{display:none}
+:root[data-stijl="nieuw"]{
+  --bg:#F4F2EE; --surface:#ffffff; --sunk:#EAE6DF; --fg:#15171C; --muted:#5E626B; --line:#E6E2DA; --drop:#ECE8FD;
+  --primary-fg:#ffffff; --danger:#B3261E;
+  --font-display:"Inter", "Segoe UI", system-ui, sans-serif; --font-body:"Inter", "Segoe UI", system-ui, sans-serif; --r:16px;
+  --primary:#B23423; --accent:#B23423; --accent-soft:#FDE7E3; --tab:#E8553F;
+}
+/* kleur per tab: --primary (tekst/knoppen, contrast ≥ 4,5:1), --accent-soft (zachte achtergrond), --tab (felle kleur, enkel decor) */
+:root[data-stijl="nieuw"][data-ktab="agenda"]{ --primary:#5038B8; --accent:#5038B8; --accent-soft:#ECE8FD; --tab:#7357E6 }
+:root[data-stijl="nieuw"][data-ktab="eten"]{ --primary:#A84A06; --accent:#A84A06; --accent-soft:#FDEBDC; --tab:#F07A1A }
+:root[data-stijl="nieuw"][data-ktab="lijsten"]{ --primary:#B0245A; --accent:#B0245A; --accent-soft:#FCE4EC; --tab:#E0457B }
+:root[data-stijl="nieuw"][data-ktab="energie"]{ --primary:#7A5700; --accent:#7A5700; --accent-soft:#FDF3D0; --tab:#E9A800 }
+:root[data-stijl="nieuw"][data-ktab="budget"]{ --primary:#1F52B5; --accent:#1F52B5; --accent-soft:#E3ECFD; --tab:#2F6FE4 }
+@media (prefers-color-scheme: dark){
+  :root[data-stijl="nieuw"]:not([data-theme="light"]){ --bg:#0F1220; --surface:#1A1E2E; --sunk:#23283A; --fg:#ECEDF2; --muted:#A3A8B8; --line:#2C3245; --drop:#2A2550;
+    --primary-fg:#0F1220; --danger:#F08A7E; --primary:#F07462; --accent:#F07462; --accent-soft:#3A2220; color-scheme:dark }
+  :root[data-stijl="nieuw"][data-ktab="agenda"]:not([data-theme="light"]){ --primary:#A794F2; --accent:#A794F2; --accent-soft:#2A2550 }
+  :root[data-stijl="nieuw"][data-ktab="eten"]:not([data-theme="light"]){ --primary:#F28C3A; --accent:#F28C3A; --accent-soft:#3A2614 }
+  :root[data-stijl="nieuw"][data-ktab="lijsten"]:not([data-theme="light"]){ --primary:#EE76A0; --accent:#EE76A0; --accent-soft:#3A1E2A }
+  :root[data-stijl="nieuw"][data-ktab="energie"]:not([data-theme="light"]){ --primary:#EBB52A; --accent:#EBB52A; --accent-soft:#3A3014 }
+  :root[data-stijl="nieuw"][data-ktab="budget"]:not([data-theme="light"]){ --primary:#6E9AF2; --accent:#6E9AF2; --accent-soft:#1C2A4A }
+}
+[data-stijl="nieuw"] h1,[data-stijl="nieuw"] h2,[data-stijl="nieuw"] h3{letter-spacing:-.02em;font-weight:750}
+[data-stijl="nieuw"] .groet{font-size:1.8rem;font-weight:800;letter-spacing:-.025em}
+/* kop */
+[data-stijl="nieuw"] .top{border-bottom:0}
+[data-stijl="nieuw"] .merk{display:inline-flex;align-items:center;gap:8px;color:var(--fg);font-weight:800;letter-spacing:-.02em}
+[data-stijl="nieuw"] .merk-logo{display:block;width:24px;height:24px}
+[data-stijl="nieuw"] .kop-avs{display:flex;margin-left:auto}
+[data-stijl="nieuw"] .weeknav:not([hidden]) ~ .kop-avs{display:none}
+[data-stijl="nieuw"] .kop-avs span{width:26px;height:26px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:var(--k);color:#fff;font-size:12px;font-weight:700;border:2px solid var(--bg);margin-left:-6px}
+[data-stijl="nieuw"] .kop-avs + #meer{margin-left:0}
+[data-stijl="nieuw"] .ib{border:0;border-radius:12px;background:var(--surface);box-shadow:0 1px 2px rgba(20,20,30,.06)}
+/* kaarten en vlakken */
+[data-stijl="nieuw"] .vk,[data-stijl="nieuw"] .kaart{border-color:transparent;border-radius:18px;box-shadow:0 1px 2px rgba(20,20,30,.05)}
+[data-stijl="nieuw"] .kaart:hover{border-color:var(--primary)}
+[data-stijl="nieuw"] .vk .getal,[data-stijl="nieuw"] .vk-groot{font-weight:800;letter-spacing:-.025em}
+[data-stijl="nieuw"] .banner{border-radius:14px}
+[data-stijl="nieuw"] .ag-item{border-radius:0 12px 12px 0}
+[data-stijl="nieuw"] .paneel{border-radius:22px 22px 0 0}
+/* knoppen, chips, invoer */
+[data-stijl="nieuw"] .knop{border-radius:12px}
+[data-stijl="nieuw"] .chip{border-radius:999px;font-weight:600}
+[data-stijl="nieuw"] .in,[data-stijl="nieuw"] select.in,[data-stijl="nieuw"] textarea.in{border-radius:12px}
+[data-stijl="nieuw"] .seg{border:0;border-radius:999px;background:var(--sunk);padding:3px;gap:2px}
+[data-stijl="nieuw"] .seg button{border-radius:999px;font-weight:600}
+[data-stijl="nieuw"] .seg button[aria-pressed="true"]{background:var(--surface);color:var(--primary);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+[data-stijl="nieuw"] .licoon{background:var(--accent-soft);border-radius:11px}
+/* tabbalk: actieve tab krijgt een zachte pil in de kleur van de tab */
+[data-stijl="nieuw"] .tabs{border-top-color:var(--line)}
+[data-stijl="nieuw"] .tabs button{border-top:0;font-weight:600;font-size:.8rem}
+[data-stijl="nieuw"] .tabs button svg{box-sizing:content-box;padding:4px 15px;border-radius:999px}
+[data-stijl="nieuw"] .tabs button[aria-current="page"]{color:var(--primary);font-weight:700}
+[data-stijl="nieuw"] .tabs button[aria-current="page"] svg{background:var(--accent-soft)}
+[data-stijl="nieuw"] .fab{background:var(--primary);color:var(--primary-fg);border-radius:18px;box-shadow:0 8px 20px rgba(20,20,30,.22)}
+</style>
+
 <header class="top"><div class="wrap">
-  <span class="merk">Kring<small id="modus"></small></span>
+  <span class="merk"><svg class="merk-logo" viewBox="0 0 24 24" fill="none" stroke-width="3.2" stroke-linecap="round" aria-hidden="true"><path d="M13.5 3.1a9 9 0 0 1 7.4 7.4" stroke="#E8553F"/><path d="M20.9 13.5a9 9 0 0 1-7.4 7.4" stroke="#2F6FE4"/><path d="M10.5 20.9a9 9 0 0 1-7.4-7.4" stroke="#8B5CF6"/><path d="M3.1 10.5a9 9 0 0 1 7.4-7.4" stroke="#14A394"/></svg>Kring<small id="modus"></small></span>
   <div class="weeknav" id="weeknav">
     <button class="ib" id="w-prev" aria-label="Vorige week">‹</button>
     <span class="lbl" id="w-lbl"></span>
     <button class="ib" id="w-next" aria-label="Volgende week">›</button>
     <button class="ib" id="w-nu">Nu</button>
   </div>
+  <span class="kop-avs" id="kop-avs" aria-hidden="true"></span>
   <button class="ib" id="meer" aria-label="Instellingen">⋯</button>
 </div></header>
 
@@ -1825,6 +1886,7 @@ function tijdGeleden(ts) {
    Vul aan bij elke wijziging aan de app: nieuwste bovenaan, kort en in gewone taal. budget: true = niet tonen aan wie het budget niet ziet. */
 const NIEUWS = [
   { datum: "2026-11-13", tekst: "Afval: de ophaalkalender staat in de agenda (aan of uit via 'Afval'). Op Vandaag zie je wat er buiten moet en wie het doet. Afvinken kan." },
+  { datum: "2026-11-15", tekst: "Nieuwe stijl: kies in Instellingen (⋯) tussen Huidig en Nieuw. Alles blijft op dezelfde plek, enkel de kleuren en vormen veranderen." },
   { datum: "2026-11-13", tekst: "Afval: stel per soort een vaste verantwoordelijke in, of kies per ophaling iemand anders (knop 'Afval' in de agenda)." },
   { datum: "2026-11-13", tekst: "Taken: kies voor wie een taak zichtbaar is. Bij een nieuwe taak is dat verplicht; je kan meerdere personen aanduiden." },
   { datum: "2026-11-13", tekst: "Tieners hebben een eigen account, zonder budget." },
@@ -5613,6 +5675,8 @@ function render(){
   const zb = zietBudget(), bt = document.querySelector('#tabs [data-tab="budget"]'); if (bt) bt.hidden = !zb;
   if (S.tab === "budget" && !zb) S.tab = "vandaag";
   const eten = ["menu", "gerechten", "lijst", "diepvries"].includes(S.tab);
+  document.documentElement.dataset.ktab = eten ? "eten" : S.tab;
+  kopAvatars();
   document.querySelectorAll("#tabs button").forEach(b => b.setAttribute("aria-current", (b.dataset.tab === S.tab || ("eten" in b.dataset && eten)) ? "page" : "false"));
   $("#weeknav").hidden = ["gerechten", "vandaag", "lijsten", "diepvries", "energie"].includes(S.tab) || (S.tab === "budget" && S.budgetView === "rekeningen");
   document.body.classList.toggle("breed", window.innerWidth >= 1000 && (S.tab === "menu" || S.tab === "budget" || S.tab === "vandaag" || S.tab === "diepvries" || S.tab === "energie" || (S.tab === "agenda" && S.agendaView === "maand")));
@@ -5624,6 +5688,17 @@ function render(){
   $("#modus").textContent = db && db.label ? db.label : "";
   ({vandaag: viewVandaag, agenda: viewAgenda, menu: viewMenu, gerechten: viewGerechten, lijst: viewLijst, lijsten: viewLijsten, budget: viewBudget, diepvries: viewDiepvries, energie: viewEnergie})[S.tab]();
   if (eten) $("#view").insertAdjacentHTML("afterbegin", `<div class="seg eten-seg" role="group" aria-label="Eten">${[["menu", "Weekmenu"], ["gerechten", "Gerechten"], ["lijst", "Boodschappen"], ["diepvries", "Voorraad"]].map(([k, l]) => `<button data-tab="${k}" aria-pressed="${S.tab === k}">${l}</button>`).join("")}</div>`);
+}
+
+/* Stijl: "huidig" (standaard) of "nieuw" (promofilmpje). Enkel weergave, per toestel bewaard. */
+function zetStijl(st){
+  if (st === "nieuw") document.documentElement.dataset.stijl = "nieuw"; else delete document.documentElement.dataset.stijl;
+  pref.set("stijl", st);
+}
+function kopAvatars(){
+  const el = $("#kop-avs"); if (!el) return;
+  const h = (S.leden || []).slice(0, 6).map(l => `<span style="--k:${l.kleur || "#5E626B"}" title="${esc(l.naam)}">${esc((l.naam || "?").charAt(0).toUpperCase())}</span>`).join("");
+  if (el.innerHTML !== h) el.innerHTML = h;
 }
 
 function demoBanner(){
@@ -5976,6 +6051,9 @@ function openInstellingen(){
   openPaneel(`
     <div class="paneel-kop"><h2>Instellingen</h2><button class="ib" data-sluit aria-label="Sluiten">✕</button></div>
     <div class="stack">
+      <div class="lbl-klein">Stijl van de app</div>
+      <div class="seg" role="group" aria-label="Stijl"><button data-stijl="huidig" aria-pressed="${pref.get("stijl", "huidig") !== "nieuw"}">Huidig</button><button data-stijl="nieuw" aria-pressed="${pref.get("stijl", "huidig") === "nieuw"}">Nieuw</button></div>
+      <p class="muted" style="margin:-4px 0 0;font-size:.85rem">Enkel de weergave verandert, alles blijft op dezelfde plek. Geldt op dit toestel.</p>
       <div class="lbl-klein">Maaltijdmomenten in het weekmenu</div>
       <div class="chips" style="margin:0">${MOMENTEN.map(([k, l]) => `<label class="toggle chip"><input type="checkbox" data-moment="${k}" ${S.momenten.includes(k) ? "checked" : ""}> ${l}</label>`).join("")}</div>
       ${instellingenAgendaHtml()}
@@ -5995,6 +6073,7 @@ function openInstellingen(){
     pref.set("momenten", S.momenten); render(); };
   p.onclick = e => {
     const t = e.target.closest("button"); if (!t) return;
+    if (t.dataset.stijl){ zetStijl(t.dataset.stijl); p.querySelectorAll("[data-stijl]").forEach(b => b.setAttribute("aria-pressed", String(b === t))); render(); return; }
     if ("reset" in t.dataset) run(async () => { await db.reset(); await herlaadAlles(); sluitPaneel(); render(); toast("Testdata hersteld"); });
     if ("import" in t.dataset) run(async () => { t.disabled = true; const n = await db.importeerFamilyWall(); await herlaadAlles(); sluitPaneel(); render(); toast(`${n} recepten geïmporteerd`); });
     if ("afmelden" in t.dataset) run(() => db.afmelden());
