@@ -4101,6 +4101,35 @@ function ovTerugblik() {
     </section>${ovDuimenKinderen(tb)}`;
 }
 
+/* Eilandload (taart): per ouder over de laatste 8 weken
+   = aantal taken waar die ouder "denkt eraan" is (per week geteld zoals de balans, eigenaar of anders uitvoerder)
+   + aantal negatieve duimpjes die die ouder gaf. */
+function enLoadTaart(ouders, weken, ma) {
+  const per = new Map(ouders.map(o => [o.id, { o, denkt: 0, neer: 0 }]));
+  for (const w of weken) {
+    const van = AG.iso(new Date(w)), tot = AG.plus(van, 6);
+    for (const p of R5L.balans(AG, S.taken, S.leden, van, tot).per) if (per.has(p.lid.id)) per.get(p.lid.id).denkt += p.denkt;
+  }
+  const start = weken[0];
+  for (const v of (S.duim || new Map()).values()) if (v.duim < 0 && v.door && per.has(v.door) && v.op && ma(v.op).getTime() >= start) per.get(v.door).neer++;
+  const rij = [...per.values()].map(x => ({ ...x, n: x.denkt + x.neer })), tot = rij.reduce((a, x) => a + x.n, 0);
+  // Percentages die samen 100 maken (grootste rest)
+  if (tot) { rij.forEach(x => { x.exact = 100 * x.n / tot; x.pct = Math.floor(x.exact); });
+    let rest = 100 - rij.reduce((a, x) => a + x.pct, 0); [...rij].sort((a, b) => (b.exact - b.pct) - (a.exact - a.pct)).forEach(x => { if (rest > 0) { x.pct++; rest--; } }); }
+  if (!tot) return `<p class="muted" style="margin:0">Nog niets om te tellen: geen taken met "denkt eraan" en geen negatieve duimpjes in de laatste 8 weken.</p>`;
+  const R = 62, c = 70; let hoek = -Math.PI / 2;
+  const sneden = rij.filter(x => x.n).map(x => {
+    const a = x.n / tot * 2 * Math.PI, a0 = hoek, a1 = hoek + a; hoek = a1;
+    if (a >= 2 * Math.PI - 1e-6) return `<circle cx="${c}" cy="${c}" r="${R}" fill="${x.o.kleur}"><title>${esc(x.o.naam)}: 100 %</title></circle>`;
+    const p = (t) => `${(c + R * Math.cos(t)).toFixed(2)},${(c + R * Math.sin(t)).toFixed(2)}`;
+    return `<path d="M${c},${c} L${p(a0)} A${R},${R} 0 ${a > Math.PI ? 1 : 0} 1 ${p(a1)} Z" fill="${x.o.kleur}" stroke="var(--surface)" stroke-width="2"><title>${esc(x.o.naam)}: ${x.pct} %</title></path>`;
+  }).join("");
+  const svg = `<svg viewBox="0 0 140 140" width="140" height="140" role="img" aria-label="Eilandload: ${rij.map(x => `${esc(x.o.naam)} ${x.pct} procent`).join(", ")}" style="flex:none">${sneden}</svg>`;
+  return `<div class="eiland-taart">${svg}<ul class="eiland-leg">${rij.map(x => `<li><span class="eiland-kop"><i style="background:${x.o.kleur}"></i><b>${esc(x.o.naam)}</b> <b class="eiland-pct">${x.pct} %</b></span>
+      <small>${x.denkt} keer "denkt eraan" + ${x.neer} × 👎 = ${x.n}</small></li>`).join("")}</ul></div>
+    <p class="muted" style="font-size:.8rem;margin:4px 0 0">Laatste 8 weken. "Denkt eraan" telt per taak per week (een dagelijkse routine één keer per week).</p>`;
+}
+
 /* Mental load: wie volgt de taken op (duimpjes gegeven), per week, de laatste 8 weken. Enkel voor ouders.
    Telt op het moment dat de duim gezet werd, niet op de datum van de taak. */
 function ovOpvolging() {
@@ -4116,7 +4145,8 @@ function ovOpvolging() {
     totaal++; if (!v.door) { zonder++; continue; }
     const m = tel.get(w); m.set(v.door, (m.get(v.door) || 0) + 1);
   }
-  if (!totaal) return `<section class="ov-sectie"><h3>Wie volgt de kinderen op</h3><p class="muted" style="margin:0">Nog geen duimpjes gegeven. Zodra jullie taken van de kinderen beoordelen, zie je hier per week wie dat doet.</p></section>`;
+  const taart = enLoadTaart(ouders, weken, ma);
+  if (!totaal) return `<section class="ov-sectie"><h3>Eilandload</h3>${taart}<p class="muted" style="margin:8px 0 0;font-size:.88rem">Nog geen duimpjes gegeven. Zodra jullie taken van de kinderen beoordelen, zie je hier per week wie dat doet.</p></section>`;
   const max = Math.max(1, ...weken.flatMap(w => ouders.map(o => tel.get(w).get(o.id) || 0)));
   const W = 340, H = 150, l = 26, r = 6, top = 10, bh = H - top - 24, gw = (W - l - r) / weken.length, bw = Math.min(14, (gw - 6) / ouders.length - 2);
   const y = v => top + bh - v / max * bh;
@@ -4131,9 +4161,10 @@ function ovOpvolging() {
   </svg>`;
   const dezeWeek = tel.get(nu), som = ouders.reduce((a, o) => a + (dezeWeek.get(o.id) || 0), 0);
   const acht = ouders.map(o => ({ o, n: weken.reduce((a, w) => a + (tel.get(w).get(o.id) || 0), 0) })), som8 = acht.reduce((a, x) => a + x.n, 0);
-  return `<section class="ov-sectie"><h3>Wie volgt de kinderen op</h3>
-    <p class="muted" style="margin:0 0 6px;font-size:.88rem">Aantal duimpjes per week (taken van de kinderen opgevolgd en beoordeeld).</p>${svg}
-    <p class="legende">${acht.map(x => `<span><i style="display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:${x.o.kleur}"></i>${esc(x.o.naam)} ${som8 ? Math.round(100 * x.n / som8) : 0} %</span>`).join("")}<span class="muted">laatste 8 weken</span></p>
+  return `<section class="ov-sectie"><h3>Eilandload</h3>${taart}
+    <h4 style="margin:14px 0 2px;font-size:.92rem">Duimpjes per week</h4>
+    <p class="muted" style="margin:0 0 6px;font-size:.85rem">Wie volgt de taken van de kinderen op en beoordeelt ze.</p>${svg}
+    <p class="legende">${acht.map(x => `<span><i style="display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:${x.o.kleur}"></i>${esc(x.o.naam)} ${x.n}</span>`).join("")}<span class="muted">laatste 8 weken</span></p>
     ${som ? `<p class="muted" style="font-size:.85rem;margin:0">Deze week: ${ouders.map(o => `${esc(o.naam)} ${dezeWeek.get(o.id) || 0}`).join(" · ")}</p>` : ""}
     ${zonder ? `<p class="muted" style="font-size:.8rem;margin:2px 0 0">${zonder} duimpje(s) zonder gekende ouder.</p>` : ""}</section>`;
 }
@@ -4151,7 +4182,7 @@ function duimKaart() {
     .sort((a, b) => b.datum.localeCompare(a.datum) || (a.tijd || "").localeCompare(b.tijd || ""));
   const lijst = open.slice(0, 12).map(x => `<li><span class="wat">${x.klaar ? "✓" : "✗"} ${esc(x.titel)}<small>${esc((lid(x.lid_id) || {}).naam || "")} · ${x.datum === vd ? "vandaag" : "gisteren"}${x.klaar ? "" : " · niet afgevinkt"}</small></span>${duimHtml(x.id, x.datum)}</li>`).join("");
   return `<details class="vk duimkaart" data-duimkaart ${pref.get("duimKaartOpen", false) ? "open" : ""}>
-    <summary class="vk-kop"><h2>Duimpjes</h2><span class="muted" style="font-size:.85rem">${kort ? "Deze week: " + kort : "Nog geen taken deze week"}</span></summary>
+    <summary class="vk-kop"><h2>Eilandload</h2><span class="muted" style="font-size:.85rem">${kort ? "Deze week: " + kort : "Nog geen taken deze week"}</span></summary>
     ${perKind.map(x => `<div class="ov-kindkop"><b>${esc(x.k.naam)}</b><span class="muted">${x.gedaan} van ${x.it.length} gedaan · 👍 ${x.t.op} · 👎 ${x.t.neer}</span></div>`).join("")}
     ${lijst ? `<h3 style="font-size:.95rem;margin:14px 0 2px">Nog te beoordelen</h3><ul class="ov-duimen">${lijst}</ul>${open.length > 12 ? `<p class="muted" style="font-size:.85rem">+ ${open.length - 12} meer in de Eilandraad</p>` : ""}`
       : `<p class="muted" style="margin:10px 0 0">Alles van vandaag en gisteren heeft een duim.</p>`}
@@ -5072,6 +5103,12 @@ setInterval(() => {
 .duim button[aria-pressed="true"]{opacity:1;filter:none;border-color:var(--primary);background:var(--drop)}
 .duim button:hover{opacity:.9}
 .ov-duimen{list-style:none;margin:0;padding:0}
+.eiland-taart{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+.eiland-leg{list-style:none;margin:0;padding:0;display:grid;gap:8px;min-width:0}
+.eiland-kop{display:flex;align-items:center;gap:8px}
+.eiland-kop i{width:12px;height:12px;border-radius:3px;display:inline-block}
+.eiland-pct{font-family:var(--font-display);font-size:1.2rem;font-variant-numeric:tabular-nums}
+.eiland-leg small{color:var(--muted);display:block;margin-left:20px}
 details.duimkaart > summary{cursor:pointer;list-style:none;flex-wrap:wrap;margin-bottom:0}
 details.duimkaart > summary::-webkit-details-marker{display:none}
 details.duimkaart > summary h2::before{content:"▸";display:inline-block;width:1em;color:var(--muted);transition:transform .15s}
