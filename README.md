@@ -69,5 +69,13 @@ Geen persoonlijke data in deze publieke repo: geen recepten, producten, tickets 
           state_class: measurement
   ```
   Plus de helper *Wagen laadenergie* (integraal, kWh) voor het energiedashboard van HA. Gemeten vanaf 14/11/2026.
+- **Laadstroom (A):** vraagt nog een derde rest_command in HA:
+  ```yaml
+    kring_evcc_maxcurrent:
+      url: "http://127.0.0.1:7070/api/loadpoints/1/maxcurrent/{{ (ampere | int) if (ampere | int) in [6, 8, 10, 13, 16] else 16 }}"
+      method: post
+      timeout: 10
+  ```
+- **Laadvenster:** tabel `gezin.laadvenster`; pg_cron-job `laadvenster` (elke minuut) roept bij een overgang `ha-energie` aan met `actie: "tick"` en het token uit `gezin.laadvenster_tick`. Daarom draait `ha-energie` zonder JWT-controle aan de poort (`--no-verify-jwt`); de functie controleert zelf.
 - **Toegang:** lezen voor elk lid van het gezin in `gezin.energie_koppeling`; de laadmodus wijzigen enkel voor beheerder en lid. Elke wijziging staat in `gezin.energie_log`.
 - **Advies per toestel:** programmaprofielen gemeten met de meetstekkers (4–14/11/2026), kwartierprijzen en injectie uit evcc (Frank), zonneverwachting uit evcc. Rekenregels in `KringEnergie` (index.html).
