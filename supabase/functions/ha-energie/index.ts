@@ -14,6 +14,7 @@
 //       { actie: "venster", actief, van: "22:00", tot: "07:00" } → tijdsvenster instellen en meteen toepassen
 //       { actie: "altijd", waarde: "on"|"off" }     → Slim met "Altijd laden" (min 6 A, zon extra) (rest_command.kring_evcc_alwayscharge)
 //       { actie: "stroom", ampere: 6..16 }         → maximale laadstroom (rest_command.kring_evcc_maxcurrent)
+//       { actie: "minstroom", ampere: 6..13 }      → minimale laadstroom, o.a. voor Altijd laden (rest_command.kring_evcc_mincurrent)
 //       { actie: "toch", uren: n|null|0, modus }   → buiten het venster toch laden (n uur, null = tot het venster begint, 0 = stoppen)
 //       { actie: "tick", token }                   → pg_cron: vensters toepassen bij een overgang, en buiten het venster
 //                                                     om de 5 min nakijken of evcc nog op Uit staat (bewaking)
@@ -81,7 +82,7 @@ async function evccStatus() {
       titel: lp.title || "Laadpaal", modus: lp.mode, altijdLaden: lp.alwaysCharge, verbonden: !!lp.connected, laadt: !!lp.charging,
       vermogen: rond(lp.chargePower), sessieKwh: rond((lp.sessionEnergy || 0) / 1000, 2), sessieDuurMin: rond((lp.chargeDuration || 0) / 60),
       wagen: lp.vehicleTitle || lp.vehicleName || "", soc: lp.vehicleSoc || null, plan: !!lp.planActive, maxA: lp.effectiveMaxCurrent || null,
-      ingesteldA: lp.maxCurrent || null, fasen: lp.phasesActive || lp.phasesConfigured || 1,
+      ingesteldA: lp.maxCurrent || null, minA: lp.minCurrent || null, nuA: rond(lp.offeredCurrent, 1), fasen: lp.phasesActive || lp.phasesConfigured || 1,
     },
     // [start (s), eind (s), €/kWh] per kwartier
     prijzen: (f.grid || []).map((p: number[]) => [p[0], p[1], rond(p[2], 4)]),
@@ -238,6 +239,14 @@ Deno.serve(async (req) => {
       const w = body.waarde === "on" ? "on" : "off";
       await rpc(auth, "energie_registreer", { p_actie: "altijd laden", p_waarde: w });   // weigert tieners en kinderen
       await haDienst("kring_evcc_alwayscharge", { waarde: w });
+      await new Promise((r) => setTimeout(r, 800));
+      return antwoord(await statusVoor(auth, true));
+    }
+    if (actie === "minstroom") {
+      const a = Number(body.ampere);
+      if (![6, 8, 10, 13].includes(a)) return antwoord({ fout: "Ongeldige minimale laadstroom" }, 400);
+      await rpc(auth, "energie_registreer", { p_actie: "minstroom", p_waarde: String(a) });
+      await haDienst("kring_evcc_mincurrent", { ampere: a });
       await new Promise((r) => setTimeout(r, 800));
       return antwoord(await statusVoor(auth, true));
     }
