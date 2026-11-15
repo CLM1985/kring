@@ -4608,6 +4608,8 @@ body:not(.breed) .en-grafiek{order:9}
 .en-venster{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:6px}
 .en-venster label{display:inline-flex;align-items:center;gap:6px;font-size:.9rem}
 .en-venster select{width:auto;padding:6px 8px}
+.en-nu-a{font-variant-numeric:tabular-nums}
+.en-grens{display:flex;justify-content:space-between;font-size:.88rem;margin:8px 0 4px}
 .en-altijd{display:flex;align-items:flex-start;gap:8px;margin-top:8px;font-size:.9rem}
 .en-altijd input{margin-top:3px}
 .en-toch{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px;font-size:.88rem}
@@ -4783,6 +4785,7 @@ window.EN_LOCAL = {
     return { ...enDemoMetA(enDemoStatus(e.modus), e), venster: enDemoVenster(e), melding: buiten && m !== "off" ? `Buiten het laadvenster: laadt vanaf ${v.van} in deze modus.` : "" }; },
   async zetVenster(actief, van, tot) { const e = this.d.energie = { ...(this.d.energie || {}) }; e.venster = { actief, van, tot };
     e.modus = actief && !enBinnen(van, tot) ? "off" : (e.vmodus || "smart"); this.save(); return { ...enDemoMetA(enDemoStatus(e.modus), e), venster: enDemoVenster(e) }; },
+  async zetMinStroom(a) { const e = this.d.energie = { ...(this.d.energie || {}), minA: a }; this.save(); return { ...enDemoMetA(enDemoStatus(e.modus || "smart"), e), venster: enDemoVenster(e) }; },
   async zetAltijd(aan) { const e = this.d.energie = { ...(this.d.energie || {}), altijd: aan }; this.save(); const st = enDemoMetA(enDemoStatus(e.modus || "smart"), e); return { ...st, venster: enDemoVenster(e) }; },
   async zetToch(uren) { const e = this.d.energie = { ...(this.d.energie || {}) }, v = e.venster || {};
     if (uren === 0) { e.toch = null; e.modus = "off"; }
@@ -4791,7 +4794,9 @@ window.EN_LOCAL = {
   async zetStroom(a) { const e = this.d.energie = { ...(this.d.energie || {}), ampere: a }; this.save(); const st = enDemoStatus(e.modus || "smart"); st.laadpunt.ingesteldA = a; return { ...st, venster: enDemoVenster(e) }; }
 };
 const enBinnen = (van, tot, nu = new Date()) => { const t = nu.toTimeString().slice(0, 5); return van === tot ? true : van < tot ? t >= van && t < tot : t >= van || t < tot; };
-function enDemoMetA(st, e) { if (e.ampere) st.laadpunt.ingesteldA = e.ampere; st.laadpunt.altijdLaden = e.altijd ? "on" : "off"; return st; }
+function enDemoMetA(st, e) { const lp = st.laadpunt; if (e.ampere) lp.ingesteldA = e.ampere; lp.minA = e.minA || 6; lp.altijdLaden = e.altijd ? "on" : "off";
+  if (lp.modus === "smart" && e.altijd && lp.vermogen < lp.minA * 230) { lp.vermogen = lp.minA * 230; lp.laadt = true; st.live.wagen = lp.vermogen; }
+  lp.vermogen = Math.min(lp.vermogen, lp.ingesteldA * 230); lp.nuA = lp.laadt ? Math.round(lp.vermogen / 230) : 0; return st; }
 function enDemoVenster(e) { const v = e.venster || { actief: false, van: "22:00", tot: "07:00" }; return { ...v, modus: e.vmodus || "smart", binnen: enBinnen(v.van, v.tot), uitzondering_tot: e.toch || null }; }
 window.EN_SUPA = {
   async enRoep(body) {
@@ -4805,7 +4810,8 @@ window.EN_SUPA = {
   async zetVenster(actief, van, tot) { return this.enRoep({ actie: "venster", actief, van, tot }); },
   async zetStroom(a) { return this.enRoep({ actie: "stroom", ampere: a }); },
   async zetToch(uren) { return this.enRoep({ actie: "toch", uren, modus: "now" }); },
-  async zetAltijd(aan) { return this.enRoep({ actie: "altijd", waarde: aan ? "on" : "off" }); }
+  async zetAltijd(aan) { return this.enRoep({ actie: "altijd", waarde: aan ? "on" : "off" }); },
+  async zetMinStroom(a) { return this.enRoep({ actie: "minstroom", ampere: a }); }
 };
 
 const EN_MODI = [["off", "Uit"], ["smart", "Slim"], ["now", "Snel"]];
@@ -4834,13 +4840,13 @@ function viewEnergie() {
   const adv = KringEnergie.advies(s);
 
   const laadSt = !lp.verbonden ? "Geen wagen aangesloten" : lp.laadt ? `Laadt aan ${enKw(lp.vermogen)} kW` : "Aangesloten, laadt nu niet";
-  const modusUitleg = { off: "Laden staat uit, ook als de wagen aangesloten is.", smart: lp.altijdLaden === "on" ? "Laadt altijd minstens aan 6 A (±1,4 kW); bij zon gaat het hoger." : "Laadt alleen op zonne-overschot of goedkope kwartieren. Bij weinig zon laadt hij dus niet: zet dan Altijd laden aan.", now: `Laadt meteen op vol vermogen, binnen de grens van ${enKw(L.netLimiet || 4500)} kW voor het hele huis.` }[lp.modus] || "";
+  const modusUitleg = { off: "Laden staat uit, ook als de wagen aangesloten is.", smart: lp.altijdLaden === "on" ? `Laadt altijd minstens aan ${lp.minA || 6} A (±${enKw((lp.minA || 6) * 230)} kW); bij zon gaat het hoger.` : "Laadt alleen op zonne-overschot of goedkope kwartieren. Bij weinig zon laadt hij dus niet: zet dan Altijd laden aan.", now: `Laadt meteen op vol vermogen, binnen de grens van ${enKw(L.netLimiet || 4500)} kW voor het hele huis.` }[lp.modus] || "";
   const laad = `<section class="en-blok en-laad"><h3>${esc(lp.titel || "Laadpaal")}</h3>
     <div class="en-st"><span>${laadSt}${lp.wagen ? " · " + esc(lp.wagen) : ""}${lp.soc ? " · " + Math.round(lp.soc) + " %" : ""}</span>${lp.verbonden && lp.sessieKwh ? `<span class="muted">${lp.sessieKwh.toLocaleString("nl-BE")} kWh deze sessie</span>` : ""}</div>
     <div class="seg" role="group" aria-label="Laadmodus">${EN_MODI.map(([k, l]) => `<button data-enmodus="${k}" aria-pressed="${lp.modus === k}" ${s.magSturen ? "" : "disabled"}>${l}</button>`).join("")}</div>
     <p class="en-uitleg">${s.magSturen ? modusUitleg : "Alleen volwassenen kunnen de laadmodus wijzigen. " + modusUitleg}</p>
     ${lp.modus === "smart" ? `<label class="en-schakel en-altijd"><input type="checkbox" data-enaltijd ${lp.altijdLaden === "on" ? "checked" : ""} ${s.magSturen ? "" : "disabled"}>
-      <span><b>Altijd laden</b> <span class="muted">· minstens 6 A, zon extra (handig als er weinig zon is)</span></span></label>` : ""}
+      <span><b>Altijd laden</b> <span class="muted">· minstens ${lp.minA || 6} A, zon extra (handig als er weinig zon is)</span></span></label>` : ""}
     ${enStroomKeuze(s)}${enVensterHtml(s)}</section>`;
 
   const advHtml = `<section class="en-blok"><h3>Beste moment om te starten</h3><ul class="en-adv">${adv.map(a => {
@@ -4870,9 +4876,25 @@ function viewEnergie() {
 /* Laadstroom: maximale stroom van het laadpunt in evcc (enkelfasig: 6 A ≈ 1,4 kW … 16 A ≈ 3,7 kW) */
 const EN_AMPERE = [6, 8, 10, 13, 16];
 function enStroomKeuze(s) {
-  const lp = s.laadpunt || {}, a = lp.ingesteldA || lp.maxA, f = lp.fasen || 1;
-  return `<div class="en-sub-blok"><div class="en-sub-kop"><b>Laadstroom</b><span class="muted">${a ? `max ${a} A ≈ ${(a * 230 * f / 1000).toLocaleString("nl-BE", { maximumFractionDigits: 1 })} kW` : ""}</span></div>
-    <div class="seg en-klein" role="group" aria-label="Maximale laadstroom">${EN_AMPERE.map(x => `<button data-enampere="${x}" aria-pressed="${a === x}" ${s.magSturen ? "" : "disabled"}>${x} A</button>`).join("")}</div></div>`;
+  const lp = s.laadpunt || {}, L = s.live || {}, max = lp.ingesteldA || lp.maxA || 16, min = lp.minA || 6, f = lp.fasen || 1;
+  const kw = a => (a * 230 * f / 1000).toLocaleString("nl-BE", { maximumFractionDigits: 1 });
+  // Wat gebeurt er nu echt, en waarom (de knoppen zijn grenzen, evcc kiest de stroom ertussen)
+  const nuA = lp.laadt ? (lp.nuA || Math.round((lp.vermogen || 0) / 230 / f)) : 0;
+  const netVol = L.netLimiet && L.net != null && L.net > L.netLimiet - 300;
+  const waarom = !lp.verbonden ? "Geen wagen aangesloten."
+    : !lp.laadt ? (lp.modus === "off" ? "Laden staat uit." : lp.modus === "smart" && lp.altijdLaden !== "on" ? "Slim wacht op zonne-overschot of een goedkoop kwartier." : "De wagen neemt nu geen stroom (vol of zelf gepauzeerd).")
+    : netVol && nuA < max ? `Afgeremd door de grens van ${enKw(L.netLimiet)} kW voor het hele huis.`
+    : lp.modus === "now" ? (nuA < max - 0.5 ? "Snel: de wagen neemt minder dan het maximum." : "Snel: laadt aan het maximum.")
+    : nuA <= min + 0.5 ? "Slim zonder zonne-overschot: laadt aan het minimum." : "Slim: minimum plus het zonne-overschot.";
+  const dis = s.magSturen ? "" : "disabled";
+  const toonMin = lp.modus === "smart" && lp.altijdLaden === "on";
+  return `<div class="en-sub-blok"><div class="en-sub-kop"><b>Laadstroom</b><span class="en-nu-a">${lp.laadt ? `nu <b>${Math.round(nuA)} A</b> · ${enKw(lp.vermogen)} kW` : "nu 0 A"}</span></div>
+    <p class="en-uitleg" style="margin:0 0 8px">${waarom}</p>
+    ${toonMin ? `<div class="en-grens"><span>Minimum <span class="muted">(Altijd laden)</span></span><span class="muted">${min} A ≈ ${kw(min)} kW</span></div>
+    <div class="seg en-klein" role="group" aria-label="Minimale laadstroom">${[6, 8, 10, 13].map(x => `<button data-enminampere="${x}" aria-pressed="${min === x}" ${dis || (x > max ? "disabled" : "")}>${x} A</button>`).join("")}</div>` : ""}
+    <div class="en-grens"><span>Maximum</span><span class="muted">${max} A ≈ ${kw(max)} kW</span></div>
+    <div class="seg en-klein" role="group" aria-label="Maximale laadstroom">${EN_AMPERE.map(x => `<button data-enampere="${x}" aria-pressed="${max === x}" ${dis || (x < min ? "disabled" : "")}>${x} A</button>`).join("")}</div>
+    <p class="en-uitleg" style="margin-top:6px">${lp.modus === "now" ? "Snel laadt aan het maximum." : toonMin ? "Slim laadt tussen minimum en maximum, afhankelijk van de zon." : "Slim laadt tot het maximum als er genoeg zon is."} Boven ${enKw(L.netLimiet || 4500)} kW voor het hele huis remt evcc altijd af.</p></div>`;
 }
 /* Tijdsvenster: buiten het venster zet Kring de laadpaal op Uit (ook als de app dicht is), met een suggestie uit de evcc-prijzen en de zonneverwachting */
 function enVensterHtml(s) {
@@ -5065,6 +5087,9 @@ function enKaartHover() {
 }
 
 document.addEventListener("click", ev => {
+  const mn = ev.target.closest("[data-enminampere]");
+  if (mn) { const e = S.en || {}, a = +mn.dataset.enminampere; if (!e.status || !e.status.magSturen) return;
+    run(async () => { try { e.status = await db.zetMinStroom(a); e.t = Date.now(); toast(`Minimum: ${a} A`); } finally { if (S.tab === "energie") viewEnergie(); } }); return; }
   const am = ev.target.closest("[data-enampere]");
   if (am) { const e = S.en || {}, a = +am.dataset.enampere; if (!e.status || !e.status.magSturen) return;
     run(async () => { try { e.status = await db.zetStroom(a); e.t = Date.now(); toast(`Laadstroom: max ${a} A`); } finally { if (S.tab === "energie") viewEnergie(); } }); return; }
