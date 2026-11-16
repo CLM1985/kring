@@ -5111,6 +5111,12 @@ function enStroomHtml(s, h) {
 }
 
 /* Dagkaart: boven prijs per kwartier (staafjes), onder vermogen (zon gemeten + verwachting, net). Twee panelen, elk één as. */
+/* Vaste schaal voor de grafiek "Prijs en verbruik", zodat hoog/laag elke dag hetzelfde oogt (bepaald op 16/11/2026):
+   - Prijs all-in (Frank-kwartierprijzen in HA, 6–16/11): mediaan 40 ct, 99 % van de kwartieren ≤ 67 ct, hoogste 84 ct
+     → 0–70 ct. Hoger wordt afgekapt met ▲ en de echte waarde; negatieve prijzen (zomer) verlengen de as naar onder.
+   - Vermogen per kwartier (P1 en Solis, aug–nov): afname tot 7,1 kW (koken + laden), injectie tot −3,0 kW (omvormer 3,3 kW)
+     → −4 tot +8 kW. Daarbuiten afgekapt. */
+const EN_AS = { prijsMax: 0.70, vMin: -4, vMax: 8 };
 function enKaartHtml(s, h, adv) {
   const KW = 900, nu = Date.now() / 1000;
   // Altijd één dag (24 u): gisteren, vandaag (standaard) of morgen
@@ -5127,14 +5133,15 @@ function enKaartHtml(s, h, adv) {
   const x = t => P.l + (t - t0) / (t1 - t0) * iw;
   // Prijspaneel
   const pTop = 18, pH = 70, pw = pr.map(p => p[2]);
-  const pMin = pw.length ? Math.floor(Math.min(...pw) * 20) / 20 : 0, pMax = pw.length ? Math.max(pMin + 0.05, Math.ceil(Math.max(...pw) * 20) / 20) : 0.5;   // stappen van 5 ct
-  const yp = v => pTop + pH - (v - pMin) / (pMax - pMin) * pH;
+  const pMin = Math.min(0, pw.length ? Math.floor(Math.min(...pw) * 20) / 20 : 0), pMax = EN_AS.prijsMax;   // vaste schaal, zie EN_AS
+  const yp = v => pTop + pH - (Math.max(pMin, Math.min(pMax, v)) - pMin) / (pMax - pMin) * pH;
+  const piek = pw.length && Math.max(...pw) > pMax ? pr.reduce((a, b) => b[2] > a[2] ? b : a) : null;   // boven de schaal: ▲ met de echte prijs
   // Vermogenspaneel
   const zonH = (h && h.zon || []).filter(p => p[0] >= t0 && p[0] < t1), netH = (h && h.net || []).filter(p => p[0] >= t0 && p[0] < t1);
   const zonF = dagOff < 0 ? [] : (s.zon || []).filter(p => p[0] >= Math.max(t0, Math.floor(nu / KW) * KW) && p[0] < t1);
   const alle = [...zonH.map(p => p[1]), ...netH.map(p => p[1]), ...zonF.map(p => p[1]), 0].map(v => v / 1000);
-  const vMax = Math.max(1, ...alle), vMin = Math.min(0, ...alle);
-  const vTop = pTop + pH + 34, vH = 130, yv = v => vTop + vH - (v - vMin) / (vMax - vMin) * vH;
+  const vMax = EN_AS.vMax, vMin = EN_AS.vMin, vBuiten = alle.some(v => v > vMax || v < vMin);   // vaste schaal, zie EN_AS
+  const vTop = pTop + pH + 34, vH = 130, yv = v => vTop + vH - (Math.max(vMin, Math.min(vMax, v)) - vMin) / (vMax - vMin) * vH;
   const H = vTop + vH + 22;
   // Smalle kaart (gsm, of vandaag + morgen): prijs als uurgemiddelde, anders per kwartier
   const perUur = iw / ((t1 - t0) / KW) < 6;
@@ -5147,8 +5154,8 @@ function enKaartHtml(s, h, adv) {
   const pad = (pts, close) => { if (!pts.length) return ""; let dd = `M${x(pts[0][0]).toFixed(1)},${yv(pts[0][1] / 1000).toFixed(1)}`; for (const [t, w] of pts) dd += `L${x(t).toFixed(1)},${yv(w / 1000).toFixed(1)}L${x(t + KW).toFixed(1)},${yv(w / 1000).toFixed(1)}`; return close ? dd + `L${x(pts[pts.length - 1][0] + KW).toFixed(1)},${yv(0)}L${x(pts[0][0]).toFixed(1)},${yv(0)}Z` : dd; };
   // Assen
   const uren = []; for (let t = t0; t <= t1; t += 3 * 3600) uren.push(t);
-  const pTicks = [pMin, (pMin + pMax) / 2, pMax].map(v => Math.round(v * 1000) / 1000);
-  const vStap = vMax - vMin > 6 ? 2 : 1, vTicks = []; for (let v = Math.ceil(vMin / vStap) * vStap; v <= vMax; v += vStap) vTicks.push(v);
+  const pTicks = [...(pMin < 0 ? [pMin] : []), 0, 0.35, pMax];
+  const vStap = 2, vTicks = []; for (let v = Math.ceil(vMin / vStap) * vStap; v <= vMax; v += vStap) vTicks.push(v);
   // Adviesbanden (enkel de eerste twee toestellen met een ander moment dan nu, om het leesbaar te houden)
   const banden = (adv || []).filter(a => a.best && a.best.start > nu + 60 && a.best.start < t1 && a.best.eind > t0).slice(0, 3);
   const svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Kwartierprijzen en vermogen vandaag">
@@ -5157,7 +5164,8 @@ function enKaartHtml(s, h, adv) {
     ${banden.map((a, i) => `<rect class="en-band" x="${x(a.best.start)}" y="${vTop}" width="${Math.max(2, x(a.best.eind) - x(a.best.start))}" height="${vH}" opacity=".8"/><text class="en-band-t" x="${x(a.best.start) + 3}" y="${vTop + 12 + i * 13}">${a.toestel.ico}</text>`).join("")}
     ${komend.length ? `<path d="${trap(komend)}L${x(komend[komend.length - 1][1])},${pTop + pH}L${x(komend[0][0])},${pTop + pH}Z" fill="var(--en-prijs)" opacity=".12"/>` : ""}
     <path d="${trap(voorbij)}" fill="none" stroke="var(--en-prijs)" stroke-width="2" opacity=".45"/><path d="${trap(komend)}" fill="none" stroke="var(--en-prijs)" stroke-width="2"/>
-    <text class="en-as" x="${P.l}" y="${vTop - 8}">Vermogen (kW)</text>
+    ${piek ? `<text class="en-as" x="${Math.min(W - P.r - 2, x(piek[0]) + 3)}" y="${pTop + 9}" fill="var(--en-prijs)" text-anchor="${x(piek[0]) > W - 60 ? "end" : "start"}" style="font-weight:700">▲ ${(piek[2] * 100).toLocaleString("nl-BE", { maximumFractionDigits: 0 })}</text>` : ""}
+    <text class="en-as" x="${P.l}" y="${vTop - 8}">Vermogen (kW${vBuiten ? ", buiten de schaal afgekapt" : ""})</text>
     ${vTicks.map(v => `<line class="${v === 0 ? "en-nul" : "en-grid-l"}" x1="${P.l}" x2="${W - P.r}" y1="${yv(v)}" y2="${yv(v)}"/><text class="en-as" x="${P.l - 5}" y="${yv(v) + 4}" text-anchor="end">${v}</text>`).join("")}
     <path d="${pad(zonH, true)}" fill="var(--en-zon)" opacity=".35"/><path d="${pad(zonH)}" fill="none" stroke="var(--en-zon)" stroke-width="2"/>
     <path d="${pad(zonF, true)}" fill="var(--en-zon)" opacity=".12"/><path d="${pad(zonF)}" fill="none" stroke="var(--en-zon)" stroke-width="2" stroke-dasharray="4 3"/>
