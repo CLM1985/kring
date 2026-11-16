@@ -23,3 +23,7 @@ select cron.schedule('energie-dagprijzen', '7 * * * *', $$
                        headers := jsonb_build_object('Content-Type', 'application/json', 'apikey', k.apikey))
     from gezin.laadvenster_tick k where k.id = 1
 $$);
+
+-- ha-energie leest het tick-token met service_role (tickToken): ook nodig voor "venster" en "toch" (stoppen),
+-- die het venster meteen toepassen. Ontbrak sinds 20261115_gezin_laadvenster.
+grant select on gezin.laadvenster_tick to service_role;
