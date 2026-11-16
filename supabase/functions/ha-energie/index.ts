@@ -16,6 +16,7 @@
 //       { actie: "stroom", ampere: 6..16 }         → maximale laadstroom (rest_command.kring_evcc_maxcurrent)
 //       { actie: "minstroom", ampere: 6..13 }      → minimale laadstroom, o.a. voor Altijd laden (rest_command.kring_evcc_mincurrent)
 //       { actie: "toch", uren: n|null|0, modus }   → buiten het venster toch laden (n uur, null = tot het venster begint, 0 = stoppen)
+//       { actie: "dagprijzen", token }             → pg_cron (elk uur): ontbrekende dagprijzen ophalen bij Frank (publiek)
 //       { actie: "tick", token }                   → pg_cron: vensters toepassen bij een overgang, en buiten het venster
 //                                                     om de 5 min nakijken of evcc nog op Uit staat (bewaking)
 
@@ -185,10 +186,48 @@ async function wagensLees(auth: string, st: Awaited<ReturnType<typeof evccStatus
     return { evcc, soc: rond(soc), bereik: rond(bereik), aanPaal, laadt, vermogen: laadt ? lp.vermogen : null, resterendS: laadt ? lp.resterendS : null, limiet: aanPaal ? lp.limiet : null };
   }));
 }
+// Dagprijzen: gemiddelde all-in prijs per dag (gezin.energie_dagprijs). Bron = publieke marktprijzen van Frank (BE),
+// omgerekend zoals in evcc: FACTOR × markt + VAST + TOESLAG. Een dag telt pas met ≥ 92 kwartieren (zomeruur: 92–100).
+const FACTOR = 1.1321, VAST = 0.0159, HISTORIEK_VAN = "2026-01-01", REF_DAGEN = 60;
+const isoDag = (d: Date) => d.toLocaleDateString("sv-SE", { timeZone: "Europe/Brussels" });
+async function frankDag(dag: string) {
+  const q = `query MarketPrices($date: String!, $resolution: PriceResolution!) { marketPrices(date: $date, resolution: $resolution) { electricityPrices { from marketPrice } } }`;
+  const r = await fetch("https://graphql.frankenergie.nl/", {
+    method: "POST", headers: { "Content-Type": "application/json", "x-country": "BE" },
+    body: JSON.stringify({ query: q, variables: { date: dag, resolution: "PT15M" }, operationName: "MarketPrices" }), signal: AbortSignal.timeout(10000),
+  });
+  const j = await r.json();
+  const p = ((j?.data?.marketPrices?.electricityPrices || []) as { marketPrice: number }[]).map((x) => FACTOR * x.marketPrice + VAST + TOESLAG).filter((v) => isFinite(v));
+  if (p.length < 92) return null;
+  return { dag, gem: rond(p.reduce((a, b) => a + b, 0) / p.length, 5), min: rond(Math.min(...p), 5), max: rond(Math.max(...p), 5), kwartieren: p.length, bijgewerkt: new Date().toISOString() };
+}
+async function dagprijzenBij(max = 40) {
+  const h = { apikey: SB_SERVICE, Authorization: `Bearer ${SB_SERVICE}`, "Accept-Profile": "gezin", "Content-Profile": "gezin" };
+  const r = await fetch(`${SB_URL}/rest/v1/energie_dagprijs?select=dag&dag=gte.${HISTORIEK_VAN}`, { headers: h });
+  const er = new Set(((r.ok ? await r.json() : []) as { dag: string }[]).map((x) => x.dag));
+  const morgen = new Date(Date.now() + 864e5), te: string[] = [];
+  for (let d = new Date(`${HISTORIEK_VAN}T12:00:00Z`); isoDag(d) <= isoDag(morgen); d = new Date(d.getTime() + 864e5)) if (!er.has(isoDag(d))) te.push(isoDag(d));
+  const rijen = [];
+  for (const dag of te.reverse().slice(0, max)) { const x = await frankDag(dag).catch(() => null); if (x) rijen.push(x); }   // nieuwste eerst
+  if (rijen.length) {
+    const w = await fetch(`${SB_URL}/rest/v1/energie_dagprijs`, { method: "POST", headers: { ...h, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates" }, body: JSON.stringify(rijen) });
+    if (!w.ok) throw new Error(`dagprijzen bewaren: ${w.status}`);
+  }
+  return { ontbrak: te.length, bewaard: rijen.length };
+}
+// Referentie voor de dagklasse: tertielen van de laatste REF_DAGEN volledige dagen vóór vandaag.
+async function dagprijzenLees(auth: string) {
+  const van = isoDag(new Date(Date.now() - (REF_DAGEN + 1) * 864e5));
+  const r = await fetch(`${SB_URL}/rest/v1/energie_dagprijs?select=dag,gem&dag=gte.${van}&order=dag`, { headers: { apikey: SB_ANON, Authorization: auth, "Accept-Profile": "gezin" } });
+  const rij = (r.ok ? await r.json() : []) as { dag: string; gem: number }[];
+  const vandaag = isoDag(new Date()), ref = rij.filter((x) => x.dag < vandaag).map((x) => Number(x.gem)).sort((a, b) => a - b);
+  const q = (p: number) => ref.length ? rond(ref[Math.min(ref.length - 1, Math.floor(p * ref.length))], 4) : null;
+  return { laag: q(1 / 3), hoog: q(2 / 3), n: ref.length, dagen: Object.fromEntries(rij.filter((x) => x.dag >= isoDag(new Date(Date.now() - 2 * 864e5))).map((x) => [x.dag, Number(x.gem)])) };
+}
 async function statusVoor(auth: string, sturen: boolean) {
-  const [st, venster] = await Promise.all([evccStatus(), vensterLees(auth)]);
+  const [st, venster, dagprijzen] = await Promise.all([evccStatus(), vensterLees(auth), dagprijzenLees(auth).catch(() => null)]);
   const wagens = await wagensLees(auth, st).catch(() => [] as Wagen[]);
-  return { ...st, wagens, venster, magSturen: sturen };
+  return { ...st, wagens, venster, dagprijzen, magSturen: sturen };
 }
 // Pas de vensters toe die een overgang hebben (aangeroepen door pg_cron of na een wijziging)
 async function vensterToepassen(token: string) {
@@ -220,6 +259,11 @@ Deno.serve(async (req) => {
     if (!HA_URL || !HA_TOKEN) return antwoord({ fout: "Home Assistant is nog niet ingesteld (HA_URL / HA_TOKEN)" }, 500);
     const body = await req.json().catch(() => ({}));
     const { actie = "status", modus, dag } = body;
+    if (actie === "dagprijzen") {
+      const t = await tickToken();
+      if (!t || body.token !== t) return antwoord({ fout: "Geen toegang" }, 403);
+      return antwoord(await dagprijzenBij(Math.min(60, Number(body.max) || 40)));
+    }
     if (actie === "tick") {
       if (typeof body.token !== "string" || body.token.length < 20) return antwoord({ fout: "Geen toegang" }, 403);
       return antwoord({ toegepast: await vensterToepassen(body.token) });
