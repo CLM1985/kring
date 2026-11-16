@@ -4637,9 +4637,12 @@ function r5KinderenKaart(kaart) {
 </script>
 <style>
 /* Energie: live-tegels, laadpaal (Uit/Slim/Snel), advies per toestel en een dagkaart (prijs boven, vermogen onder; één as per paneel) */
-:root{ --en-zon:#b07a14; --en-net:#2f6fb5; --en-prijs:#24493f }
-@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){ --en-zon:#b98326; --en-net:#5b95db; --en-prijs:#8cc2b0 }}
-:root[data-theme="dark"]{ --en-zon:#b98326; --en-net:#5b95db; --en-prijs:#8cc2b0 }
+:root{ --en-zon:#b07a14; --en-net:#2f6fb5; --en-prijs:#24493f; --en-goedkoop:#2a78d6; --en-normaal:#8a8983; --en-duur:#eb6834 }
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){ --en-zon:#b98326; --en-net:#5b95db; --en-prijs:#8cc2b0; --en-goedkoop:#3987e5; --en-normaal:#6f6e69; --en-duur:#d95926 }}
+:root[data-theme="dark"]{ --en-zon:#b98326; --en-net:#5b95db; --en-prijs:#8cc2b0; --en-goedkoop:#3987e5; --en-normaal:#6f6e69; --en-duur:#d95926 }
+.en-prijsnu{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin:0 0 6px}
+.en-prijsnu b{font-family:var(--font-display);font-size:1.5rem;font-variant-numeric:tabular-nums}
+.en-prijsnu .en-pil{font-size:.78rem;font-weight:700;color:#fff;border-radius:99px;padding:2px 9px}
 .en-kop{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:12px}
 .en-kop h2{margin:0;font-family:var(--font-display);font-size:1.35rem}
 .en-kop .muted{font-size:.85rem}
@@ -5117,6 +5120,9 @@ function enStroomHtml(s, h) {
    - Vermogen per kwartier (P1 en Solis, aug–nov): afname tot 7,1 kW (koken + laden), injectie tot −3,0 kW (omvormer 3,3 kW)
      → −4 tot +8 kW. Daarbuiten afgekapt. */
 const EN_AS = { prijsMax: 0.70, vMin: -4, vMax: 8 };
+/* Prijszones (all-in): ±10 % van de kwartieren is goedkoop, ±15 % duur (november 2026; mediaan 40 ct). */
+const EN_ZONE = { goedkoop: 0.30, duur: 0.50 };
+const enZone = v => v < EN_ZONE.goedkoop ? ["goedkoop", "var(--en-goedkoop)"] : v > EN_ZONE.duur ? ["duur", "var(--en-duur)"] : ["normaal", "var(--en-normaal)"];
 function enKaartHtml(s, h, adv) {
   const KW = 900, nu = Date.now() / 1000;
   // Altijd één dag (24 u): gisteren, vandaag (standaard) of morgen
@@ -5132,7 +5138,7 @@ function enKaartHtml(s, h, adv) {
   const P = { l: 40, r: 8 }, iw = W - P.l - P.r;
   const x = t => P.l + (t - t0) / (t1 - t0) * iw;
   // Prijspaneel
-  const pTop = 18, pH = 70, pw = pr.map(p => p[2]);
+  const pTop = 18, pH = 96, pw = pr.map(p => p[2]);
   const pMin = Math.min(0, pw.length ? Math.floor(Math.min(...pw) * 20) / 20 : 0), pMax = EN_AS.prijsMax;   // vaste schaal, zie EN_AS
   const yp = v => pTop + pH - (Math.max(pMin, Math.min(pMax, v)) - pMin) / (pMax - pMin) * pH;
   const piek = pw.length && Math.max(...pw) > pMax ? pr.reduce((a, b) => b[2] > a[2] ? b : a) : null;   // boven de schaal: ▲ met de echte prijs
@@ -5154,16 +5160,18 @@ function enKaartHtml(s, h, adv) {
   const pad = (pts, close) => { if (!pts.length) return ""; let dd = `M${x(pts[0][0]).toFixed(1)},${yv(pts[0][1] / 1000).toFixed(1)}`; for (const [t, w] of pts) dd += `L${x(t).toFixed(1)},${yv(w / 1000).toFixed(1)}L${x(t + KW).toFixed(1)},${yv(w / 1000).toFixed(1)}`; return close ? dd + `L${x(pts[pts.length - 1][0] + KW).toFixed(1)},${yv(0)}L${x(pts[0][0]).toFixed(1)},${yv(0)}Z` : dd; };
   // Assen
   const uren = []; for (let t = t0; t <= t1; t += 3 * 3600) uren.push(t);
-  const pTicks = [...(pMin < 0 ? [pMin] : []), 0, 0.35, pMax];
+  const pTicks = [...(pMin < 0 ? [pMin] : []), 0, EN_ZONE.goedkoop, EN_ZONE.duur, pMax];
+  const nul = yp(Math.max(0, pMin));
+  const staaf = (p, oud) => { const x0 = x(p[0]) + 1, w = Math.max(1, x(p[1]) - x(p[0]) - 2), y = yp(p[2]), top = Math.min(y, nul), hh = Math.max(1, Math.abs(nul - y));
+    return `<rect x="${x0.toFixed(1)}" y="${top.toFixed(1)}" width="${w.toFixed(1)}" height="${hh.toFixed(1)}" rx="${Math.min(2, w / 2)}" fill="${enZone(p[2])[1]}"${oud ? ' opacity=".4"' : ""}/>`; };
   const vStap = 2, vTicks = []; for (let v = Math.ceil(vMin / vStap) * vStap; v <= vMax; v += vStap) vTicks.push(v);
   // Adviesbanden (enkel de eerste twee toestellen met een ander moment dan nu, om het leesbaar te houden)
   const banden = (adv || []).filter(a => a.best && a.best.start > nu + 60 && a.best.start < t1 && a.best.eind > t0).slice(0, 3);
   const svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Kwartierprijzen en vermogen vandaag">
     <text class="en-as" x="${P.l}" y="11">Prijs (ct/kWh${perUur ? ", uurgemiddelde" : ""})</text>
-    ${(pr.length ? pTicks : []).map(v => `<line class="en-grid-l" x1="${P.l}" x2="${W - P.r}" y1="${yp(v)}" y2="${yp(v)}"/><text class="en-as" x="${P.l - 5}" y="${yp(v) + 4}" text-anchor="end">${(v * 100).toLocaleString("nl-BE", { maximumFractionDigits: 1 })}</text>`).join("")}
+    ${(pr.length ? pTicks : []).map(v => `<line class="en-grid-l" x1="${P.l}" x2="${W - P.r}" y1="${yp(v)}" y2="${yp(v)}"/><text class="en-as" x="${P.l - 5}" y="${yp(v) + 4}" text-anchor="end">${(v * 100).toLocaleString("nl-BE", { maximumFractionDigits: 0 })}</text>`).join("")}
     ${banden.map((a, i) => `<rect class="en-band" x="${x(a.best.start)}" y="${vTop}" width="${Math.max(2, x(a.best.eind) - x(a.best.start))}" height="${vH}" opacity=".8"/><text class="en-band-t" x="${x(a.best.start) + 3}" y="${vTop + 12 + i * 13}">${a.toestel.ico}</text>`).join("")}
-    ${komend.length ? `<path d="${trap(komend)}L${x(komend[komend.length - 1][1])},${pTop + pH}L${x(komend[0][0])},${pTop + pH}Z" fill="var(--en-prijs)" opacity=".12"/>` : ""}
-    <path d="${trap(voorbij)}" fill="none" stroke="var(--en-prijs)" stroke-width="2" opacity=".45"/><path d="${trap(komend)}" fill="none" stroke="var(--en-prijs)" stroke-width="2"/>
+    ${prZ.map(p => staaf(p, p[1] <= nu)).join("")}
     ${piek ? `<text class="en-as" x="${Math.min(W - P.r - 2, x(piek[0]) + 3)}" y="${pTop + 9}" fill="var(--en-prijs)" text-anchor="${x(piek[0]) > W - 60 ? "end" : "start"}" style="font-weight:700">▲ ${(piek[2] * 100).toLocaleString("nl-BE", { maximumFractionDigits: 0 })}</text>` : ""}
     <text class="en-as" x="${P.l}" y="${vTop - 8}">Vermogen (kW${vBuiten ? ", buiten de schaal afgekapt" : ""})</text>
     ${vTicks.map(v => `<line class="${v === 0 ? "en-nul" : "en-grid-l"}" x1="${P.l}" x2="${W - P.r}" y1="${yv(v)}" y2="${yv(v)}"/><text class="en-as" x="${P.l - 5}" y="${yv(v) + 4}" text-anchor="end">${v}</text>`).join("")}
@@ -5180,8 +5188,10 @@ function enKaartHtml(s, h, adv) {
   const rij = t => { const p = prU.find(q => q[0] === t), z = (zonH.find(q => q[0] === t) || zonF.find(q => q[0] === t) || [])[1], n = (netH.find(q => q[0] === t) || [])[1];
     return `<tr><td>${enDag(t)}${enUur(t)}</td><td>${p ? enCt(p[2]) : ""}</td><td>${z != null ? enKw(z) : ""}</td><td>${n != null ? (n < 0 ? "−" : "") + enKw(n) : ""}</td></tr>`; };
   const tabel = []; for (let t = t0; t < t1; t += 3600) tabel.push(rij(t));
-  return `<div class="en-kaart">${svg}<div class="en-tip" id="en-tip" hidden></div></div>
-    <div class="en-leg">${pr.length ? `<span><i style="background:var(--en-prijs);height:3px"></i>Prijs per ${perUur ? "uur (gemiddeld)" : "kwartier"}</span>` : ""}${zonH.length ? `<span><i style="background:var(--en-zon);opacity:.6"></i>Zon gemeten</span>` : ""}${zonF.length ? `<span><i style="border:2px dashed var(--en-zon);height:6px"></i>Zon verwacht</span>` : ""}${netH.length ? `<span><i style="background:var(--en-net);height:3px"></i>Net (+ afname, − injectie)</span>` : ""}${banden.length ? `<span><i style="background:var(--accent-soft)"></i>Advies</span>` : ""}</div>
+  const pNu = dagOff === 0 ? pr.find(p => p[0] <= nu && p[1] > nu) : null, zNu = pNu && enZone(pNu[2]);
+  const kop = pNu ? `<div class="en-prijsnu"><span class="muted">Nu</span><b>${(pNu[2] * 100).toLocaleString("nl-BE", { maximumFractionDigits: 1 })} ct</b><span class="en-pil" style="background:${zNu[1]}">${zNu[0]}</span></div>` : "";
+  return `${kop}<div class="en-kaart">${svg}<div class="en-tip" id="en-tip" hidden></div></div>
+    <div class="en-leg">${pr.length ? `<span><i style="background:var(--en-goedkoop)"></i>goedkoop (&lt; ${EN_ZONE.goedkoop * 100} ct)</span><span><i style="background:var(--en-normaal)"></i>normaal</span><span><i style="background:var(--en-duur)"></i>duur (&gt; ${EN_ZONE.duur * 100} ct)</span>` : ""}${zonH.length ? `<span><i style="background:var(--en-zon);opacity:.6"></i>Zon gemeten</span>` : ""}${zonF.length ? `<span><i style="border:2px dashed var(--en-zon);height:6px"></i>Zon verwacht</span>` : ""}${netH.length ? `<span><i style="background:var(--en-net);height:3px"></i>Net (+ afname, − injectie)</span>` : ""}${banden.length ? `<span><i style="background:var(--accent-soft)"></i>Advies</span>` : ""}</div>
     <details class="en-meer"><summary>Tabel per uur</summary><table class="en-tabel"><thead><tr><th>Uur</th><th>Prijs (gem.)</th><th>Zon kW</th><th>Net kW</th></tr></thead><tbody>${tabel.join("")}</tbody></table></details>`;
 }
 
