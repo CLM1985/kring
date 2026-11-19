@@ -16,7 +16,10 @@
 //       { actie: "stroom", ampere: 6..16 }         → maximale laadstroom (rest_command.kring_evcc_maxcurrent)
 //       { actie: "minstroom", ampere: 6..13 }      → minimale laadstroom, o.a. voor Altijd laden (rest_command.kring_evcc_mincurrent)
 //       { actie: "toch", uren: n|null|0, modus }   → buiten het venster toch laden (n uur, null = tot het venster begint, 0 = stoppen)
+//       { actie: "dagkost", dagen?: 31 }           → kost per dag (afname − injectie + vaste kost) en per maand, met de maandpiek;
+//                                                     voor elk lid van het gekoppelde gezin
 //       { actie: "dagprijzen", token }             → pg_cron (elk uur): ontbrekende dagprijzen ophalen bij Frank (publiek)
+//                                                     en de kost per dag bijwerken (gezin.energie_dagkost)
 //       { actie: "tick", token }                   → pg_cron: vensters toepassen bij een overgang, en buiten het venster
 //                                                     om de 5 min nakijken of evcc nog op Uit staat (bewaking)
 
@@ -190,14 +193,17 @@ async function wagensLees(auth: string, st: Awaited<ReturnType<typeof evccStatus
 // omgerekend zoals in evcc: FACTOR × markt + VAST + TOESLAG. Een dag telt pas met ≥ 92 kwartieren (zomeruur: 92–100).
 const FACTOR = 1.1321, VAST = 0.0159, HISTORIEK_VAN = "2026-01-01", REF_DAGEN = 60;
 const isoDag = (d: Date) => d.toLocaleDateString("sv-SE", { timeZone: "Europe/Brussels" });
-async function frankDag(dag: string) {
+async function frankRuw(dag: string) {
   const q = `query MarketPrices($date: String!, $resolution: PriceResolution!) { marketPrices(date: $date, resolution: $resolution) { electricityPrices { from marketPrice } } }`;
   const r = await fetch("https://graphql.frankenergie.nl/", {
     method: "POST", headers: { "Content-Type": "application/json", "x-country": "BE" },
     body: JSON.stringify({ query: q, variables: { date: dag, resolution: "PT15M" }, operationName: "MarketPrices" }), signal: AbortSignal.timeout(10000),
   });
   const j = await r.json();
-  const p = ((j?.data?.marketPrices?.electricityPrices || []) as { marketPrice: number }[]).map((x) => FACTOR * x.marketPrice + VAST + TOESLAG).filter((v) => isFinite(v));
+  return (j?.data?.marketPrices?.electricityPrices || []) as { from: string; marketPrice: number }[];
+}
+async function frankDag(dag: string) {
+  const p = (await frankRuw(dag)).map((x) => FACTOR * x.marketPrice + VAST + TOESLAG).filter((v) => isFinite(v));
   if (p.length < 92) return null;
   return { dag, gem: rond(p.reduce((a, b) => a + b, 0) / p.length, 5), min: rond(Math.min(...p), 5), max: rond(Math.max(...p), 5), kwartieren: p.length, bijgewerkt: new Date().toISOString() };
 }
@@ -224,6 +230,248 @@ async function dagprijzenLees(auth: string) {
   const q = (p: number) => ref.length ? rond(ref[Math.min(ref.length - 1, Math.floor(p * ref.length))], 4) : null;
   return { laag: q(1 / 3), hoog: q(2 / 3), n: ref.length, dagen: Object.fromEntries(rij.filter((x) => x.dag >= isoDag(new Date(Date.now() - 2 * 864e5))).map((x) => [x.dag, Number(x.gem)])) };
 }
+// ---------- Kost per dag (gezin.energie_dagkost) ----------
+// Afname en injectie (kWh) komen uit de statistieken van HA voor de netmeters van het energiedashboard (energy/get_prefs):
+// de toename van de teller per 5 minuten (laatste KW_DAGEN dagen) of per uur (ouder: HA bewaart 5-minutenwaarden ±10 dagen).
+// Elk kwartier wordt gewogen met de marktprijs van Frank van dat kwartier. Bewaard worden de kWh en Σ kWh × marktprijs;
+// de euro's volgen pas bij het lezen uit de formules hieronder, zodat een aangepaste formule voor de hele historiek geldt.
+//   afname   = FACTOR × markt + VAST + TOESLAG   (all-in, zoals evcc en de dagprijs)
+//   injectie = INJ_FACTOR × markt + INJ_VAST     (voorlopig: de factuur van september 2026 gaf markt − 1,85 ct; nog te ijken)
+// VASTE_KOST_DAG: vaste vergoeding Frank + databeheer (€46,93 per jaar). Capaciteitstarief Fluvius Halle-Vilvoorde 2026:
+// CAP_KW_JAAR per kW maandpiek (hoogste kwartiergemiddelde afname, minstens CAP_MIN_KW). De piek is enkel te bepalen uit
+// dagen met kwartierwaarden; de meter van Fluvius blijft de referentie.
+const INJ_FACTOR = 1, INJ_VAST = -0.0185, VASTE_KOST_DAG = 0.1286, CAP_KW_JAAR = 59.41, CAP_MIN_KW = 2.5;
+const KOST_VAN = "2026-08-01";   // de P1-statistieken in HA beginnen in augustus 2026
+const KW_DAGEN = 8;               // zo ver terug vragen we 5-minutenwaarden (met een dag marge op de 10 dagen van HA)
+const MAX_KW = 40;                // gemiddeld vermogen daarboven kan niet: zo'n rij is geen meting (zie spreid)
+const NET_AF = ["sensor.p1_meter_energie_import"], NET_IN = ["sensor.p1_meter_energie_export"];   // reserve als HA geen energie-instellingen geeft
+
+const BRUSSEL = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Brussels", hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+function tzVerschil(ms: number) {   // Belgische tijd − UTC op dat ogenblik, in ms
+  const p: Record<string, number> = {};
+  for (const x of BRUSSEL.formatToParts(new Date(ms))) if (x.type !== "literal") p[x.type] = Number(x.value);
+  return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - Math.floor(ms / 1000) * 1000;
+}
+// Begin van een kalenderdag in België (Unix, seconden). Het zomeruur wisselt om 01:00 UTC, dus nooit rond middernacht.
+function dagStart(dag: string) {
+  const [j, m, d] = dag.split("-").map(Number), utc = Date.UTC(j, m - 1, d);
+  return (utc - tzVerschil(utc - tzVerschil(utc))) / 1000;
+}
+const dagPlus = (dag: string, n: number) => new Date(Date.parse(`${dag}T12:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
+
+type StatRij = { start: number; change?: number | null };
+type Kw = { kwh: number; dek: number; geschat: boolean };   // per kwartier: kWh, gedekte seconden, verdeeld over een gat
+type Bron = { af: Map<number, Kw>; inj: Map<number, Kw>; per: "kwartier" | "uur" };
+
+// Verdeelt de toename per periode (P seconden) over de kwartieren. Na een gat (HA lag stil) bevat de eerste rij de hele
+// inhaalbeweging: die wordt gelijkmatig over het gat verdeeld en als geschat gemarkeerd, zodat er geen valse piek ontstaat.
+function spreid(rijen: StatRij[] | undefined, P: number) {
+  const uit = new Map<number, Kw>();
+  let vorig: number | null = null;   // einde van de vorige rij (s)
+  for (const r of [...(rijen || [])].sort((a, b) => a.start - b.start)) {
+    if (typeof r.change !== "number" || !isFinite(r.change)) continue;
+    const s = Math.round(r.start / 1000), e = s + P, van = vorig !== null && vorig < s ? vorig : s, gat = van < s;
+    vorig = e;
+    // Onmogelijk veel: de eerste rij na opgeruimde historiek draagt de hele tellerstand. Overslaan = niet gemeten.
+    if (r.change / ((e - van) / 3600) > MAX_KW) continue;
+    for (let q = Math.floor(van / 900) * 900; q < e; q += 900) {
+      const o = Math.min(e, q + 900) - Math.max(van, q);
+      if (o <= 0) continue;
+      const k = uit.get(q) || { kwh: 0, dek: 0, geschat: false };
+      k.kwh += Math.max(0, r.change) * o / (e - van); k.dek += o; if (gat || r.change < 0) k.geschat = true;
+      uit.set(q, k);
+    }
+  }
+  return uit;
+}
+// Meerdere tellers (bv. dag- en nachttarief) optellen. Een kwartier is gedekt zodra één teller het volledig dekt.
+function reeks(stat: Record<string, StatRij[]>, ids: string[], P: number) {
+  const uit = new Map<number, Kw>();
+  for (const id of ids) for (const [q, k] of spreid(stat[id], P)) {
+    const t = uit.get(q);
+    if (!t) uit.set(q, { ...k }); else { t.kwh += k.kwh; t.dek = Math.max(t.dek, k.dek); t.geschat = t.geschat || k.geschat; }
+  }
+  return uit;
+}
+// Eén dag [t0, t1) optellen tot nu. De piek telt enkel bij kwartierwaarden, op volledig gemeten, niet-geschatte kwartieren.
+function dagSom(t0: number, t1: number, nu: number, b: Bron, markt: Map<number, number>) {
+  const s = { afname_kwh: 0, injectie_kwh: 0, afname_markt: 0, injectie_markt: 0, piek_kw: null as number | null, piek_om: null as string | null,
+    per: b.per, gemeten: 0, verwacht: Math.round((t1 - t0) / 900), geschat: 0, zonder_prijs: 0 };
+  for (let q = t0; q < t1 && q < nu; q += 900) {
+    const a = b.af.get(q), i = b.inj.get(q);
+    if (!a && !i) continue;
+    const ak = a ? a.kwh : 0, ik = i ? i.kwh : 0, m = markt.get(q);
+    const vol = Math.max(a ? a.dek : 0, i ? i.dek : 0) >= 890, gs = !!(a && a.geschat) || !!(i && i.geschat);
+    s.afname_kwh += ak; s.injectie_kwh += ik;
+    if (m == null) { if (ak > 0.0005 || ik > 0.0005) s.zonder_prijs++; } else { s.afname_markt += ak * m; s.injectie_markt += ik * m; }
+    if (vol) s.gemeten++;
+    if (gs) s.geschat++;
+    if (b.per === "kwartier" && vol && !gs && (s.piek_kw === null || ak * 4 > s.piek_kw)) { s.piek_kw = ak * 4; s.piek_om = new Date(q * 1000).toISOString(); }
+  }
+  return s;
+}
+
+// Eén websocket-sessie met HA. `werk` krijgt een functie die een vraag stuurt en op het antwoord wacht.
+function haSessie<T>(werk: (vraag: (v: Record<string, unknown>) => Promise<unknown>) => Promise<T>, wachtMs = 25000): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(HA_URL.replace(/^http/, "ws") + "/api/websocket");
+    const open = new Map<number, { ok: (r: unknown) => void; nok: (e: Error) => void }>();
+    let id = 0, af = false;
+    const einde = (fout: Error | null, waarde?: T) => { if (af) return; af = true; clearTimeout(stop); try { ws.close(); } catch { /* */ } if (fout) reject(fout); else resolve(waarde as T); };
+    const stop = setTimeout(() => einde(new Error("Home Assistant antwoordt niet")), wachtMs);
+    const vraag = (v: Record<string, unknown>) => new Promise<unknown>((ok, nok) => { open.set(++id, { ok, nok }); ws.send(JSON.stringify({ id, ...v })); });
+    ws.onmessage = (e) => {
+      const m = JSON.parse(String(e.data));
+      if (m.type === "auth_required") ws.send(JSON.stringify({ type: "auth", access_token: HA_TOKEN }));
+      else if (m.type === "auth_invalid") einde(new Error("HA-token ongeldig"));
+      else if (m.type === "auth_ok") werk(vraag).then((w) => einde(null, w), (x) => einde(x instanceof Error ? x : new Error(String(x))));
+      else if (m.type === "result" && open.has(m.id)) {
+        const p = open.get(m.id)!; open.delete(m.id);
+        if (m.success) p.ok(m.result); else p.nok(new Error(m.error?.message || "Home Assistant gaf een fout"));
+      }
+    };
+    ws.onerror = () => einde(new Error("Verbinding met Home Assistant mislukt"));
+    ws.onclose = () => einde(new Error("Verbinding met Home Assistant verbroken"));
+  });
+}
+// De netmeters zoals ze in het energiedashboard van HA staan (afname en injectie, eventueel per tarief).
+async function netMeters(vraag: (v: Record<string, unknown>) => Promise<unknown>) {
+  try {
+    const p = await vraag({ type: "energy/get_prefs" }) as { energy_sources?: Record<string, unknown>[] };
+    const af: string[] = [], inj: string[] = [];
+    const bij = (l: string[], v: unknown) => { if (typeof v === "string" && v && !l.includes(v)) l.push(v); };
+    for (const s of p?.energy_sources || []) {
+      if (s.type !== "grid") continue;
+      bij(af, s.stat_energy_from); bij(inj, s.stat_energy_to);
+      for (const f of (s.flow_from as Record<string, unknown>[]) || []) bij(af, f.stat_energy_from);
+      for (const f of (s.flow_to as Record<string, unknown>[]) || []) bij(inj, f.stat_energy_to);
+    }
+    if (af.length) return { af, inj };
+  } catch { /* geen energie-instellingen in HA: de reserve hieronder */ }
+  return { af: NET_AF, inj: NET_IN };
+}
+// Marktprijs per kwartier (Unix-seconden → €/kWh) voor één dag; uurprijzen gelden voor hun vier kwartieren.
+async function frankMarkt(dag: string) {
+  const p = (await frankRuw(dag)).map((x) => [Math.round(Date.parse(x.from) / 1000), Number(x.marketPrice)] as [number, number])
+    .filter((x) => isFinite(x[0]) && isFinite(x[1])).sort((a, b) => a[0] - b[0]);
+  const stap = p.length > 1 ? Math.max(900, Math.min(3600, ...p.slice(1).map((x, i) => x[0] - p[i][0]))) : 900;
+  const m = new Map<number, number>();
+  for (const [t, v] of p) for (let q = t; q < t + stap; q += 900) m.set(q, v);
+  return m;
+}
+
+// Vult gezin.energie_dagkost aan: vandaag, ontbrekende dagen en dagen die vóór hun einde berekend zijn (nieuwste eerst).
+async function dagkostBij(huishouden: string, max = 40) {
+  const h = { apikey: SB_SERVICE, Authorization: `Bearer ${SB_SERVICE}`, "Accept-Profile": "gezin", "Content-Profile": "gezin" };
+  const nu = Math.floor(Date.now() / 1000), vandaag = isoDag(new Date()), recentVan = dagPlus(vandaag, -KW_DAGEN);
+  const scanVan = [KOST_VAN, dagPlus(vandaag, -400)].sort()[1];
+  const r = await fetch(`${SB_URL}/rest/v1/energie_dagkost?select=dag,bijgewerkt&huishouden_id=eq.${huishouden}&dag=gte.${scanVan}&order=dag.desc&limit=500`, { headers: h });
+  if (!r.ok) throw new Error(`dagkost lezen: ${r.status}`);
+  const er = new Map(((await r.json()) as { dag: string; bijgewerkt: string }[]).map((x) => [x.dag, Date.parse(x.bijgewerkt) / 1000]));
+  const te: string[] = [];
+  for (let d = vandaag; d >= scanVan && te.length < max; d = dagPlus(d, -1)) {
+    const b = er.get(d);
+    if (d === vandaag || b == null || b < dagStart(dagPlus(d, 1)) + 900) te.push(d);
+  }
+  const recent = te.filter((d) => d >= recentVan);
+  const [ha, prijzen] = await Promise.all([
+    haSessie(async (vraag) => {
+      const ids = await netMeters(vraag);
+      const stat = (van: string, period: string) => vraag({ type: "recorder/statistics_during_period", period, types: ["change"], units: { energy: "kWh" },
+        statistic_ids: [...ids.af, ...ids.inj], start_time: new Date((dagStart(van) - 86400) * 1000).toISOString(), end_time: new Date((nu + 300) * 1000).toISOString() }) as Promise<Record<string, StatRij[]>>;
+      const [uur, vijf] = await Promise.all([stat(te[te.length - 1], "hour"), recent.length ? stat(recent[recent.length - 1], "5minute") : Promise.resolve({} as Record<string, StatRij[]>)]);
+      return { ids, uur, vijf };
+    }),
+    (async () => {   // prijzen per dag, 5 tegelijk
+      const uit = new Map<string, Map<number, number> | null>();
+      for (let i = 0; i < te.length; i += 5) await Promise.all(te.slice(i, i + 5).map(async (d) => uit.set(d, await frankMarkt(d).catch(() => null))));
+      return uit;
+    })(),
+  ]);
+  const { ids } = ha;
+  if (![...Object.values(ha.uur), ...Object.values(ha.vijf)].some((l) => (l || []).length)) throw new Error(`Geen statistieken in Home Assistant voor ${[...ids.af, ...ids.inj].join(", ")}`);
+  const bU: Bron = { af: reeks(ha.uur, ids.af, 3600), inj: reeks(ha.uur, ids.inj, 3600), per: "uur" };
+  const b5: Bron = { af: reeks(ha.vijf, ids.af, 300), inj: reeks(ha.vijf, ids.inj, 300), per: "kwartier" };
+  const rijen = [];
+  let zonderPrijzen = 0;
+  for (const dag of te) {
+    const t0 = dagStart(dag), t1 = dagStart(dagPlus(dag, 1)), markt = prijzen.get(dag) || new Map<number, number>();
+    let geprijsd = 0; for (let q = t0; q < t1; q += 900) if (markt.has(q)) geprijsd++;
+    // Onvolledige prijzen: later opnieuw proberen. Na 3 dagen toch bewaren (met zonder_prijs), zodat de dag niet blijft hangen.
+    if (geprijsd < (t1 - t0) / 900 && dag > dagPlus(vandaag, -3)) { zonderPrijzen++; continue; }
+    const u = dagSom(t0, t1, nu, bU, markt), k = dag >= recentVan ? dagSom(t0, t1, nu, b5, markt) : null;
+    const s = k && k.gemeten >= u.gemeten ? k : u;
+    rijen.push({ huishouden_id: huishouden, dag, afname_kwh: rond(s.afname_kwh, 3), injectie_kwh: rond(s.injectie_kwh, 3), afname_markt: rond(s.afname_markt, 5), injectie_markt: rond(s.injectie_markt, 5),
+      piek_kw: s.piek_kw === null ? null : rond(s.piek_kw, 3), piek_om: s.piek_om, per: s.per, gemeten: s.gemeten, verwacht: s.verwacht, geschat: s.geschat, zonder_prijs: s.zonder_prijs, bijgewerkt: new Date().toISOString() });
+  }
+  if (rijen.length) {
+    const w = await fetch(`${SB_URL}/rest/v1/energie_dagkost`, { method: "POST", headers: { ...h, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates" }, body: JSON.stringify(rijen) });
+    if (!w.ok) throw new Error(`dagkost bewaren: ${w.status}`);
+  }
+  return { te_doen: te.length, bewaard: rijen.length, zonder_prijzen: zonderPrijzen, meters: ids };
+}
+// Voor pg_cron: elk gekoppeld gezin (één Home Assistant per project, dus dezelfde meters)
+async function dagkostAlle(max = 40) {
+  const r = await fetch(`${SB_URL}/rest/v1/energie_koppeling?select=huishouden_id&actief=is.true`, { headers: { apikey: SB_SERVICE, Authorization: `Bearer ${SB_SERVICE}`, "Accept-Profile": "gezin" } });
+  if (!r.ok) throw new Error(`koppeling lezen: ${r.status}`);
+  const uit = [];
+  for (const k of (await r.json()) as { huishouden_id: string }[]) uit.push(await dagkostBij(k.huishouden_id, max));
+  return uit;
+}
+
+type KostRij = { dag: string; afname_kwh: number; injectie_kwh: number; afname_markt: number; injectie_markt: number; piek_kw: number | null; piek_om: string | null;
+  per: string; gemeten: number; verwacht: number; geschat: number; zonder_prijs: number; bijgewerkt: string };
+// Kost per dag (laatste `dagen` dagen) en per maand (deze en de twee vorige), in euro volgens de formules hierboven.
+async function dagkostLees(auth: string, huishouden: string, dagen: unknown) {
+  const n = Math.min(92, Math.max(7, Math.round(Number(dagen)) || 31)), vandaag = isoDag(new Date());
+  const eerste = dagPlus(vandaag, -(n - 1)), maandVan = dagPlus(`${vandaag.slice(0, 7)}-15`, -61).slice(0, 7) + "-01";
+  const van = eerste < maandVan ? eerste : maandVan;
+  const lees = async () => {
+    const r = await fetch(`${SB_URL}/rest/v1/energie_dagkost?select=*&huishouden_id=eq.${huishouden}&dag=gte.${van}&order=dag`, { headers: { apikey: SB_ANON, Authorization: auth, "Accept-Profile": "gezin" } });
+    if (!r.ok) throw new Error(`dagkost lezen: ${r.status}`);
+    return (await r.json()) as KostRij[];
+  };
+  let rij = await lees(), waarschuwing: string | null = null;
+  const vr = rij.find((x) => x.dag === vandaag);
+  if (!vr || Date.now() - Date.parse(vr.bijgewerkt) > 75 * 60e3) {   // pg_cron werkt elk uur bij; anders hier (eerste keer, of cron viel uit)
+    try { await dagkostBij(huishouden, 12); rij = await lees(); } catch (e) { waarschuwing = e instanceof Error ? e.message : String(e); }
+  }
+  const euro = (x: KostRij) => {
+    const af = FACTOR * Number(x.afname_markt) + (VAST + TOESLAG) * Number(x.afname_kwh), inj = INJ_FACTOR * Number(x.injectie_markt) + INJ_VAST * Number(x.injectie_kwh);
+    return { af, inj, netto: af - inj + VASTE_KOST_DAG };
+  };
+  const volledig = (x: KostRij) => x.gemeten >= x.verwacht && x.zonder_prijs === 0;
+  const per = new Map(rij.filter((x) => x.gemeten > 0 || Number(x.afname_kwh) > 0 || Number(x.injectie_kwh) > 0).map((x) => [x.dag, x]));
+  const dagenUit = [];
+  for (let d = eerste; d <= vandaag; d = dagPlus(d, 1)) {
+    const x = per.get(d);
+    if (!x) { dagenUit.push({ dag: d, leeg: true }); continue; }
+    const e = euro(x);
+    dagenUit.push({ dag: d, afname_kwh: rond(Number(x.afname_kwh), 2), injectie_kwh: rond(Number(x.injectie_kwh), 2), afname_eur: rond(e.af, 2), injectie_eur: rond(e.inj, 2),
+      vast_eur: VASTE_KOST_DAG, netto_eur: rond(e.netto, 2), volledig: volledig(x), per: x.per, gemeten: x.gemeten, verwacht: x.verwacht, geschat: x.geschat, zonder_prijs: x.zonder_prijs,
+      piek_kw: x.piek_kw == null ? null : rond(Number(x.piek_kw), 2) });
+  }
+  const maanden = [];
+  for (let m = maandVan.slice(0, 7); m <= vandaag.slice(0, 7); m = dagPlus(`${m}-28`, 7).slice(0, 7)) {
+    const lijst = [...per.values()].filter((x) => x.dag.slice(0, 7) === m);
+    const inMaand = Number(dagPlus(`${dagPlus(`${m}-28`, 7).slice(0, 7)}-01`, -1).slice(8));
+    let af = 0, inj = 0, afK = 0, inK = 0, vol = 0, kwDagen = 0, piek: number | null = null, piekOm: string | null = null;
+    for (const x of lijst) {
+      const e = euro(x); af += e.af; inj += e.inj; afK += Number(x.afname_kwh); inK += Number(x.injectie_kwh);
+      if (volledig(x)) vol++;
+      if (x.per === "kwartier") { kwDagen++; if (x.piek_kw != null && (piek === null || Number(x.piek_kw) > piek)) { piek = Number(x.piek_kw); piekOm = x.piek_om; } }
+    }
+    const capKw = piek === null ? null : Math.max(piek, CAP_MIN_KW);
+    maanden.push({ maand: m, dagen: lijst.length, dagen_volledig: vol, dagen_in_maand: inMaand, dagen_verstreken: m === vandaag.slice(0, 7) ? Number(vandaag.slice(8)) : inMaand,
+      afname_kwh: rond(afK, 1), injectie_kwh: rond(inK, 1), afname_eur: rond(af, 2), injectie_eur: rond(inj, 2), vast_eur: rond(lijst.length * VASTE_KOST_DAG, 2),
+      netto_eur: lijst.length ? rond(af - inj + lijst.length * VASTE_KOST_DAG, 2) : null,
+      piek_kw: piek === null ? null : rond(piek, 2), piek_om: piekOm, piek_dagen: kwDagen,
+      capaciteit_kw: capKw === null ? null : rond(capKw, 2), capaciteit_eur: capKw === null ? null : rond(capKw * CAP_KW_JAAR * inMaand / 365, 2) });
+  }
+  return { dagen: dagenUit, maanden, bijgewerkt: rij.reduce((a, x) => (x.bijgewerkt > a ? x.bijgewerkt : a), "") || null, waarschuwing,
+    formule: { factor: FACTOR, vast: VAST, toeslag: TOESLAG, injectie_factor: INJ_FACTOR, injectie_vast: INJ_VAST, vaste_kost_dag: VASTE_KOST_DAG, capaciteit_kw_jaar: CAP_KW_JAAR, capaciteit_min_kw: CAP_MIN_KW } };
+}
+
 async function statusVoor(auth: string, sturen: boolean) {
   const [st, venster, dagprijzen] = await Promise.all([evccStatus(), vensterLees(auth), dagprijzenLees(auth).catch(() => null)]);
   const wagens = await wagensLees(auth, st).catch(() => [] as Wagen[]);
@@ -262,7 +510,10 @@ Deno.serve(async (req) => {
     if (actie === "dagprijzen") {
       const t = await tickToken();
       if (!t || body.token !== t) return antwoord({ fout: "Geen toegang" }, 403);
-      return antwoord(await dagprijzenBij(Math.min(60, Number(body.max) || 40)));
+      const max = Math.min(60, Number(body.max) || 40), prijzen = await dagprijzenBij(max);
+      // Daarna de kost per dag; een fout daar (bv. HA onbereikbaar) mag de dagprijzen niet tegenhouden
+      const dagkost = await dagkostAlle(max).catch((e) => ({ fout: e instanceof Error ? e.message : String(e) }));
+      return antwoord({ ...prijzen, dagkost });
     }
     if (actie === "tick") {
       if (typeof body.token !== "string" || body.token.length < 20) return antwoord({ fout: "Geen toegang" }, 403);
@@ -275,6 +526,7 @@ Deno.serve(async (req) => {
 
     if (actie === "status") return antwoord(await statusVoor(auth, !!toegang.sturen));
     if (actie === "historiek") return antwoord(await historiek(dag === "gisteren" ? "gisteren" : "vandaag"));
+    if (actie === "dagkost") return antwoord(await dagkostLees(auth, toegang.huishouden, body.dagen));
     if (actie === "laadmodus") {
       if (!MODI.includes(modus)) return antwoord({ fout: "Onbekende laadmodus" }, 400);
       await rpc(auth, "energie_registreer", { p_actie: "laadmodus", p_waarde: modus });   // weigert tieners en kinderen
