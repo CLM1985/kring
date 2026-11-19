@@ -5282,7 +5282,7 @@ function enKaartHover() {
 }
 
 /* Kost per dag: afname − injectie + vaste kost, per dag en per maand, met de maandpiek (capaciteitstarief).
-   Bron: ha-energie, actie "dagkost" (gezin.energie_dagkost, elk uur bijgewerkt). Enkel voor wie het budget ziet. */
+   Bron: ha-energie, actie "dagkost" (gezin.energie_dagkost, elk uur bijgewerkt). Voor elk gezinslid. */
 const enEur0 = v => v == null ? "–" : "€\u00a0" + Number(v).toLocaleString("nl-BE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const enKwh1 = v => v == null ? "–" : Number(v).toLocaleString("nl-BE", { maximumFractionDigits: 1 });
 const enDagKort = d => new Date(d + "T12:00:00Z").toLocaleDateString("nl-BE", { day: "numeric", month: "numeric", timeZone: "UTC" });
@@ -5295,7 +5295,6 @@ function enLaadKost() {
     .finally(() => { e.kostLaden = false; if (S.tab === "energie" && !document.querySelector(".en-meer[open]")) viewEnergie(); });
 }
 function enKostBlok() {
-  if (!zietBudget()) return "";
   const e = S.en = S.en || {}, k = e.kost;
   if (!e.kostLaden && (!k && !e.kostFout || k && Date.now() - (e.kostT || 0) > 15 * 60e3)) setTimeout(enLaadKost);
   const kop = `<div class="en-kop" style="margin-bottom:8px"><h3 style="margin:0">Kost per dag</h3>${k && k.bijgewerkt ? `<span class="muted">bijgewerkt ${new Date(k.bijgewerkt).toLocaleTimeString("nl-BE", { hour: "2-digit", minute: "2-digit" })}</span>` : ""}</div>`;

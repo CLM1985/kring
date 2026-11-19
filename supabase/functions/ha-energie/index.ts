@@ -17,7 +17,7 @@
 //       { actie: "minstroom", ampere: 6..13 }      → minimale laadstroom, o.a. voor Altijd laden (rest_command.kring_evcc_mincurrent)
 //       { actie: "toch", uren: n|null|0, modus }   → buiten het venster toch laden (n uur, null = tot het venster begint, 0 = stoppen)
 //       { actie: "dagkost", dagen?: 31 }           → kost per dag (afname − injectie + vaste kost) en per maand, met de maandpiek;
-//                                                     enkel voor wie het budget mag zien (gezin.ziet_budget)
+//                                                     voor elk lid van het gekoppelde gezin
 //       { actie: "dagprijzen", token }             → pg_cron (elk uur): ontbrekende dagprijzen ophalen bij Frank (publiek)
 //                                                     en de kost per dag bijwerken (gezin.energie_dagkost)
 //       { actie: "tick", token }                   → pg_cron: vensters toepassen bij een overgang, en buiten het venster
@@ -526,10 +526,7 @@ Deno.serve(async (req) => {
 
     if (actie === "status") return antwoord(await statusVoor(auth, !!toegang.sturen));
     if (actie === "historiek") return antwoord(await historiek(dag === "gisteren" ? "gisteren" : "vandaag"));
-    if (actie === "dagkost") {
-      if (!(await rpc(auth, "ziet_budget", { p_huishouden: toegang.huishouden }))) return antwoord({ fout: "Geen toegang tot de kosten" }, 403);
-      return antwoord(await dagkostLees(auth, toegang.huishouden, body.dagen));
-    }
+    if (actie === "dagkost") return antwoord(await dagkostLees(auth, toegang.huishouden, body.dagen));
     if (actie === "laadmodus") {
       if (!MODI.includes(modus)) return antwoord({ fout: "Onbekende laadmodus" }, 400);
       await rpc(auth, "energie_registreer", { p_actie: "laadmodus", p_waarde: modus });   // weigert tieners en kinderen

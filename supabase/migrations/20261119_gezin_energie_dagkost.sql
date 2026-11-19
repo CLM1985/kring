@@ -6,7 +6,7 @@
 --   afname   = FACTOR × afname_markt + (VAST + TOESLAG) × afname_kwh       (zelfde formule als evcc en de dagprijs)
 --   injectie = INJ_FACTOR × injectie_markt + INJ_VAST × injectie_kwh
 -- Een aangepaste formule (bv. na ijking met een factuur) geldt zo meteen voor de hele historiek.
--- Kost is geld: enkel leesbaar voor wie het budget mag zien (beheerder en lid; geen tiener of kind).
+-- Leesbaar voor elk lid van het gezin (ook tieners en kinderen), zoals de rest van de energiepagina.
 -- Schrijven doet enkel ha-energie (service_role).
 
 create table gezin.energie_dagkost (
@@ -27,7 +27,7 @@ create table gezin.energie_dagkost (
   primary key (huishouden_id, dag)
 );
 alter table gezin.energie_dagkost enable row level security;
-create policy dagkost_lezen on gezin.energie_dagkost for select to authenticated using (gezin.ziet_budget(huishouden_id));
+create policy dagkost_lezen on gezin.energie_dagkost for select to authenticated using (gezin.is_lid(huishouden_id));
 grant select on gezin.energie_dagkost to authenticated;
 grant select, insert, update on gezin.energie_dagkost to service_role;
 
