@@ -1885,6 +1885,7 @@ function tijdGeleden(ts) {
 /* ---------- Wat is er nieuw? (kaart op Vandaag, laatste 7 dagen) ----------
    Vul aan bij elke wijziging aan de app: nieuwste bovenaan, kort en in gewone taal. budget: true = niet tonen aan wie het budget niet ziet. */
 const NIEUWS = [
+  { datum: "2026-11-22", tekst: "Eilandraad: die van de lopende week blijft zichtbaar tot de volgende overlegdag, ook als hij een dag later viel of nog niet afgerond is. Met ‹ › blader je naar vorige weken." },
   { datum: "2026-11-13", tekst: "Afval: de ophaalkalender staat in de agenda (aan of uit via 'Afval'). Op Vandaag zie je wat er buiten moet en wie het doet. Afvinken kan." },
   { datum: "2026-11-15", tekst: "Nieuwe stijl: kies in Instellingen (⋯) tussen Huidig en Nieuw. Alles blijft op dezelfde plek, enkel de kleuren en vormen veranderen." },
   { datum: "2026-11-13", tekst: "Afval: stel per soort een vaste verantwoordelijke in, of kies per ophaling iemand anders (knop 'Afval' in de agenda)." },
@@ -4374,6 +4375,7 @@ window.R5_SUPA = {
 // S.r5 en S.google staan in de toestand S (hoofdscript)
 document.addEventListener("click", e => {
   const b = e.target.closest("button"); if (!b || b.closest("#paneel") || !("overleg" in b.dataset)) return;
+  S.r5.start = r5StandaardStart();
   run(() => openOverleg());
 });
 
@@ -4381,8 +4383,11 @@ async function herlaadR5() {
   try {
     const inst = S.vsInst || (window.KringVoorstel || {}).STANDAARD || { startdag: 5, dag: 3, dagen: 7 };
     S.vsStart = S.vsStart || VS.planStart(iso(new Date()), inst.startdag);
-    const [ov, info, gk] = await Promise.all([db.loadOverleg(S.vsStart), db.kindmodusInfo(), db.googleKoppelingen()]);
-    S.r5.ov = ov; S.r5.km.info = info || { ouderpin: false, kinderen: [] }; S.google = gk || [];
+    const vorig = VS.plus(S.vsStart, -7);
+    const [ov, ovVorig, info, gk] = await Promise.all([db.loadOverleg(S.vsStart), db.loadOverleg(vorig), db.kindmodusInfo(), db.googleKoppelingen()]);
+    S.r5.ovVolg = ov; S.r5.ovVorig = ovVorig;
+    S.r5.start = r5StandaardStart();
+    S.r5.ov = S.r5.start === S.vsStart ? ov : ovVorig; S.r5.km.info = info || { ouderpin: false, kinderen: [] }; S.google = gk || [];
   } catch (e) { console.error(e); }
 }
 
@@ -4407,15 +4412,28 @@ function r5OpvolgKaart(kaart) {
 }
 
 /* ================= Weekoverleg ================= */
-const r5Einde = () => VS.plus(S.vsStart, ((S.vsInst || {}).dagen || 7) - 1);
-const r5OverlegDatum = () => { const i = S.vsInst || VS.STANDAARD; return VS.plus(S.vsStart, -(((i.startdag - i.dag + 7) % 7) || 7)); };
+/* Welke Eilandraad? S.vsStart = de planweek die nog moet beginnen. De Eilandraad van de lopende week (S.vsStart − 7)
+   blijft zichtbaar tot de overlegdag van de volgende, of tot die volgende al gestart is (stap > 1 of afgerond).
+   Zo blijft een overleg dat een dag later viel of nog niet afgerond is bereikbaar. Met ‹ › blader je verder terug. */
+const ovS = () => S.r5.start || S.vsStart;
+const r5Einde = (st = ovS()) => VS.plus(st, ((S.vsInst || {}).dagen || 7) - 1);
+const r5OverlegDatum = (st = S.vsStart) => { const i = S.vsInst || VS.STANDAARD; return VS.plus(st, -(((i.startdag - i.dag + 7) % 7) || 7)); };
+function r5StandaardStart() {
+  const vd = AG.iso(new Date()), vo = S.r5.ov && S.r5.ov.start === S.vsStart ? S.r5.ov : S.r5.ovVolg;
+  return vd >= r5OverlegDatum(S.vsStart) || (vo && (vo.afgerond || vo.stap > 1)) ? S.vsStart : VS.plus(S.vsStart, -7);
+}
+/* Terugblik: de week vóór de planweek, tot gisteren maar nooit voorbij de dag vóór de start. */
+const r5TerugTot = () => { const g = AG.plus(AG.iso(new Date()), -1), m = AG.plus(ovS(), -1); return g < m ? g : m; };
+/* "Naar …" verplaatst een blijven-liggen taak naar de start van de planweek, of naar vandaag als die al voorbij is. */
+const ovNaar = () => { const vd = AG.iso(new Date()); return ovS() > vd ? ovS() : vd; };
+const ovVs = () => ovS() === S.vsStart ? S.vs : S.r5.vs;
 const r5DagKort = ds => `${KORT[AG.weekdag(ds) - 1]} ${AG.dag(ds).getDate()} ${MND[AG.dag(ds).getMonth()]}`;
 
 function r5OverlegKaart(kaart) {
   if (!S.vsStart) return "";
-  const vd = AG.iso(new Date()), ov = S.r5.ov;
-  if (vd < r5OverlegDatum() && !(ov && !ov.afgerond)) return "";
-  const periode = `${r5DagKort(S.vsStart)} – ${r5DagKort(r5Einde())}`;
+  const st = r5StandaardStart(), ov = S.r5.ov && S.r5.ov.start === st ? S.r5.ov : st === S.vsStart ? S.r5.ovVolg : S.r5.ovVorig;
+  const periode = `${r5DagKort(st)} – ${r5DagKort(r5Einde(st))}`;
+  if (st !== S.vsStart && !ov) return kaart(`Eilandraad ${periode}`, `<p class="muted" style="margin-top:0">Niet gehouden. Volgende: ${r5DagKort(r5OverlegDatum())}.</p><button class="knop sec klein" data-overleg>Alsnog openen</button>`);
   const inhoud = ov && ov.afgerond
     ? `<p>Afgerond ✓ <span class="muted">${esc((lid(ov.afgerond_door) || {}).naam || "")}</span></p><button class="knop sec klein" data-overleg>Bekijken</button>`
     : ov && ov.stap > 1
@@ -4424,14 +4442,19 @@ function r5OverlegKaart(kaart) {
   return kaart(`Eilandraad ${periode}`, inhoud);
 }
 
-async function openOverleg(stap) {
+async function openOverleg(stap, start) {
   S.r5.terug = null;
-  if (!S.r5.ov || S.r5.ov.start !== S.vsStart) S.r5.ov = (await db.loadOverleg(S.vsStart)) || { start: S.vsStart, stap: 1, notities: "", samenvatting: {}, afgerond: null, afgerond_door: null };
+  if (start) S.r5.start = start;
+  S.r5.start = S.r5.start || r5StandaardStart();
+  const st = ovS();
+  if (!S.r5.ov || S.r5.ov.start !== st) S.r5.ov = (await db.loadOverleg(st)) || { start: st, stap: 1, notities: "", samenvatting: {}, afgerond: null, afgerond_door: null };
+  if (st !== S.vsStart && (!S.r5.vs || S.r5.vs.start !== st)) { S.r5.vs = await db.loadVoorstel(st); if (S.r5.vs) S.r5.vs.start = S.r5.vs.start || st; }
   const ov = S.r5.ov;
   ov.samenvatting = ov.samenvatting || {};
   if (stap) ov.stap = stap;
   const s = ov.stap || 1;
-  const kop = `<div class="paneel-kop"><h2>Eilandraad ${r5DagKort(S.vsStart)} – ${r5DagKort(r5Einde())}</h2><button class="ib" data-sluit aria-label="Sluiten">✕</button></div>
+  const kop = `<div class="paneel-kop"><button class="ib" data-ovweek="${VS.plus(st, -7)}" aria-label="Vorige Eilandraad">‹</button><h2 style="flex:1;text-align:center">Eilandraad ${r5DagKort(st)} – ${r5DagKort(r5Einde())}</h2>${st < S.vsStart ? `<button class="ib" data-ovweek="${VS.plus(st, 7)}" aria-label="Volgende Eilandraad">›</button>` : ""}<button class="ib" data-sluit aria-label="Sluiten">✕</button></div>
+    ${st < S.vsStart ? `<p class="muted" style="margin:-4px 0 8px;font-size:.85rem">Eilandraad van een lopende of vorige week${ov.afgerond ? "" : " · nog niet afgerond"}.</p>` : ""}
     <ol class="ov-stappen">${R5_STAPPEN.map((n, i) => `<li><button class="${i + 1 === s ? "nu" : i + 1 < s ? "klaar" : ""}" data-ovstap="${i + 1}" aria-current="${i + 1 === s ? "step" : "false"}"><span>${i + 1}</span>${n}</button></li>`).join("")}</ol>`;
   const body = [ovTerugblik, ovKomend, ovVerdelen, ovEten, ovAfspraken][s - 1]();
   const voet = `<div class="voet">${s > 1 ? `<button class="knop sec links" data-ovstap="${s - 1}">‹ ${R5_STAPPEN[s - 2]}</button>` : `<span class="links"></span>`}
@@ -4444,7 +4467,7 @@ async function openOverleg(stap) {
 }
 
 function ovTerugblik() {
-  const vd = AG.iso(new Date()), van = VS.plus(S.vsStart, -7), tot = AG.plus(vd, -1);
+  const van = VS.plus(ovS(), -7), tot = r5TerugTot();
   const tb = R5L.terugblik(AG, S.taken, van, tot), sv = S.r5.ov.samenvatting;
   const wieTekst = id => id && lid(id) ? lid(id).naam : "iemand";
   const perLid = {}; tb.gedaan.forEach(x => { const n = wieTekst(x.lid_id); perLid[n] = (perLid[n] || 0) + 1; });
@@ -4456,7 +4479,7 @@ function ovTerugblik() {
     </section>
     <section class="ov-sectie"><h3>Bleef liggen${tb.open.length ? ` (${tb.open.length})` : ""}</h3>
       ${tb.open.length ? `<div class="ov-open">${tb.open.map(x => `<div class="ov-rij"><span><b>${esc(x.titel)}</b><small>${esc(wieTekst(x.lid_id))} · ${r5DagKort(x.datum)}${x.herh ? " · herhalend" : ""}</small></span>
-          <span class="ov-knoppen">${duimHtml(x.id, x.datum)}${x.herh ? "" : `<button class="knop sec klein" data-ovnaar="${x.id}">Naar ${r5DagKort(S.vsStart)}</button>`}<button class="knop sec klein" data-ovval="${x.id}|${x.datum}">Laat vallen</button></span></div>`).join("")}</div>`
+          <span class="ov-knoppen">${duimHtml(x.id, x.datum)}${x.herh ? "" : `<button class="knop sec klein" data-ovnaar="${x.id}">Naar ${r5DagKort(ovNaar())}</button>`}<button class="knop sec klein" data-ovval="${x.id}|${x.datum}">Laat vallen</button></span></div>`).join("")}</div>`
         : `<p>Niets bleef liggen. 👏</p>`}
       ${sv.verplaatst || sv.gevallen ? `<p class="muted" style="font-size:.85rem">${sv.verplaatst ? `${sv.verplaatst} verplaatst` : ""}${sv.verplaatst && sv.gevallen ? " · " : ""}${sv.gevallen ? `${sv.gevallen} losgelaten` : ""}</p>` : ""}
     </section>${ovDuimenKinderen(tb)}`;
@@ -4568,7 +4591,7 @@ function ovDuimenKinderen(tb) {
 }
 
 function ovKomend() {
-  const van = S.vsStart, tot = r5Einde(), per = agendaItems(van, tot), dagen = [];
+  const van = ovS(), tot = r5Einde(), per = agendaItems(van, tot), dagen = [];
   for (let d = van; d <= tot; d = AG.plus(d, 1)) dagen.push(d);
   const dr = R5L.drukte(per, dagen);
   const weg = AG.rolUit(S.afspraken.filter(a => a.maaltijd), van, tot);
@@ -4584,7 +4607,7 @@ function ovKomend() {
 }
 
 function ovVerdelen() {
-  const van = S.vsStart, tot = r5Einde();
+  const van = ovS(), tot = r5Einde();
   const bal = R5L.balans(AG, S.taken, S.leden, van, tot);
   const w = R5L.weekTaken(AG, S.taken, van, tot);
   const reeksen = []; const idx = new Map();
@@ -4610,23 +4633,24 @@ function ovVerdelen() {
 }
 
 function ovEten() {
-  const v = S.vs;
+  const v = ovVs(), huidig = ovS() === S.vsStart;
   const dagen = v ? v.dagen : [];
-  return `<section class="ov-sectie"><h3>Weekmenu ${r5DagKort(S.vsStart)} – ${r5DagKort(r5Einde())}</h3>
+  return `<section class="ov-sectie"><h3>Weekmenu ${r5DagKort(ovS())} – ${r5DagKort(r5Einde())}</h3>
       ${v ? `<ul class="vlijst">${dagen.map(x => `<li><span class="muted" style="min-width:3.5em">${esc(VS_KORT[x.weekdag])} ${AG.dag(x.datum).getDate()}</span><span style="flex:1">${x.vrij ? `<i class="muted">${esc(x.vrij)}</i>` : esc(vsNaam(x))}</span></li>`).join("")}</ul>
         <p class="muted" style="font-size:.88rem">${v.status === "overgenomen" ? "✓ Overgenomen in het weekmenu." : "Nog een voorstel: bekijk, wissel en neem over."}</p>
-        <div class="acties"><button class="knop ${v.status === "overgenomen" ? "sec" : ""}" data-ovvoorstel>Weekvoorstel ${v.status === "overgenomen" ? "bekijken" : "bekijken en overnemen"}</button></div>`
-        : `<p class="muted">Nog geen weekvoorstel.</p><div class="acties"><button class="knop" data-ovvoorstel>Weekvoorstel maken</button></div>`}
+        <div class="acties">${huidig ? `<button class="knop ${v.status === "overgenomen" ? "sec" : ""}" data-ovvoorstel>Weekvoorstel ${v.status === "overgenomen" ? "bekijken" : "bekijken en overnemen"}</button>` : `<button class="knop sec" data-ovgoto="menu">Weekmenu openen</button>`}</div>`
+        : huidig ? `<p class="muted">Nog geen weekvoorstel.</p><div class="acties"><button class="knop" data-ovvoorstel>Weekvoorstel maken</button></div>`
+        : `<p class="muted">Geen weekvoorstel bewaard.</p><div class="acties"><button class="knop sec" data-ovgoto="menu">Weekmenu openen</button></div>`}
     </section>
-    <section class="ov-sectie"><h3>Bestelling</h3><p class="muted" style="font-size:.88rem">Bestellen ${r5DagKort(BL.besteldag(S.vsStart))} bij Collect&amp;Go: de bestellijst ${r5DagKort(S.vsStart)} – ${r5DagKort(r5Einde())} volgt uit het weekmenu, min wat in huis is.</p>
+    <section class="ov-sectie"><h3>Bestelling</h3><p class="muted" style="font-size:.88rem">Bestellen ${r5DagKort(BL.besteldag(ovS()))} bij Collect&amp;Go: de bestellijst ${r5DagKort(ovS())} – ${r5DagKort(r5Einde())} volgt uit het weekmenu, min wat in huis is.</p>
       <button class="knop sec klein" data-ovgoto="lijst">Boodschappenlijst openen</button></section>`;
 }
 
 function ovAfspraken() {
-  const ov = S.r5.ov, sv = ov.samenvatting, tb = R5L.terugblik(AG, S.taken, VS.plus(S.vsStart, -7), AG.plus(AG.iso(new Date()), -1));
+  const ov = S.r5.ov, sv = ov.samenvatting, tb = R5L.terugblik(AG, S.taken, VS.plus(ovS(), -7), r5TerugTot());
   const kidsDuim = isOuder() ? S.leden.filter(l => isKindLid(l.id)).map(k => { const it = [...tb.gedaan, ...tb.open].filter(x => x.lid_id === k.id), t = duimTelling(it); return t.op || t.neer ? `${k.naam}: 👍 ${t.op} · 👎 ${t.neer}` : ""; }).filter(Boolean) : [];
   const punten = [`${tb.gedaan.length} taken gedaan vorige week`, ...kidsDuim, sv.verplaatst && `${sv.verplaatst} verplaatst`, sv.gevallen && `${sv.gevallen} losgelaten`,
-    sv.toegewezen && `${sv.toegewezen} keer verdeeld`, S.vs && S.vs.status === "overgenomen" && "weekmenu overgenomen"].filter(Boolean);
+    sv.toegewezen && `${sv.toegewezen} keer verdeeld`, ovVs() && ovVs().status === "overgenomen" && "weekmenu overgenomen"].filter(Boolean);
   return `<section class="ov-sectie"><h3>Wat spraken we af?</h3>
       <textarea class="in" id="ov-notities" placeholder="bv. Ouder B regelt de verjaardag van oma; Ouder A belt de garage; zaterdag samen de garage opruimen" ${ov.afgerond ? "readonly" : ""}>${esc(ov.notities || "")}</textarea>
       <p class="muted" style="font-size:.85rem">Wordt vanzelf bewaard. Iets dat gedaan moet worden? Maak er een taak van in stap 3.</p></section>
@@ -4637,21 +4661,22 @@ function ovAfspraken() {
 function ovKlik(e) {
   const b = e.target.closest("button"); if (!b) return;
   const ov = S.r5.ov, sv = ov.samenvatting;
+  if (b.dataset.ovweek) { S.r5.ov = null; run(() => openOverleg(null, b.dataset.ovweek)); return; }
   if (b.dataset.ovstap) { const n = +b.dataset.ovstap; ov.stap = n; run(async () => { await db.bewaarOverleg(ov); openOverleg(n); }); return; }
   if (b.dataset.ovnaar) { const t = S.taken.find(x => x.id === b.dataset.ovnaar); sv.verplaatst = (sv.verplaatst || 0) + 1;
-    run(async () => { await db.bewaarTaak({ ...t, deadline: S.vsStart }); await db.bewaarOverleg(ov); await herlaadAgenda(); openOverleg(); toast(`'${t.titel}' staat op ${r5DagKort(S.vsStart)}`); }); return; }
+    run(async () => { const naar = ovNaar(); await db.bewaarTaak({ ...t, deadline: naar }); await db.bewaarOverleg(ov); await herlaadAgenda(); openOverleg(); toast(`'${t.titel}' staat op ${r5DagKort(naar)}`); }); return; }
   if (b.dataset.ovval) { const [id, d] = b.dataset.ovval.split("|"); sv.gevallen = (sv.gevallen || 0) + 1;
     run(async () => { await db.schrapTaakVoorkomen(id, d); await db.bewaarOverleg(ov); await herlaadAgenda(); openOverleg(); }); return; }
   if (b.dataset.ovnieuw) { S.r5.terug = ov.stap; openNieuwKeuze(b.dataset.ovnieuw); $("#paneel").onclick = agendaPaneelKlik; return; }
-  if ("ovtaak" in b.dataset) { S.r5.terug = ov.stap; openTaak(null, S.vsStart); return; }
+  if ("ovtaak" in b.dataset) { S.r5.terug = ov.stap; openTaak(null, ovS()); return; }
   if (b.dataset.item) { S.r5.terug = ov.stap; openItem(b.dataset.item); return; }
   if ("ovvoorstel" in b.dataset) { S.r5.terug = ov.stap; run(() => openVoorstel()); return; }
-  if (b.dataset.ovgoto) { ov.stap = 4; run(async () => { await db.bewaarOverleg(ov); if (b.dataset.ovgoto === "lijst" || b.dataset.ovgoto === "menu") { S.pweek = datumVan(S.vsStart); await herlaadWeek(); render(); } }); sluitPaneel(); S.tab = b.dataset.ovgoto; render(); window.scrollTo(0, 0); return; }
+  if (b.dataset.ovgoto) { ov.stap = 4; run(async () => { await db.bewaarOverleg(ov); if (b.dataset.ovgoto === "lijst" || b.dataset.ovgoto === "menu") { S.pweek = datumVan(ovS()); await herlaadWeek(); render(); } }); sluitPaneel(); S.tab = b.dataset.ovgoto; render(); window.scrollTo(0, 0); return; }
   if ("ovaf" in b.dataset) run(async () => {
     ov.afgerond = new Date().toISOString(); ov.afgerond_door = S.ik; ov.stap = 5;
     const ta = $("#ov-notities"); if (ta) ov.notities = ta.value;
-    await db.bewaarOverleg(ov); await db.log(`rondde de Eilandraad ${r5DagKort(S.vsStart)} – ${r5DagKort(r5Einde())} af`);
-    await herlaadGezin(); sluitPaneel(); render(); toast("Eilandraad afgerond. Fijne week!");
+    await db.bewaarOverleg(ov); await db.log(`rondde de Eilandraad ${r5DagKort(ovS())} – ${r5DagKort(r5Einde())} af`);
+    S.r5.start = null; await herlaadGezin(); sluitPaneel(); render(); toast("Eilandraad afgerond. Fijne week!");
   });
 }
 function ovWijzig(e) {
