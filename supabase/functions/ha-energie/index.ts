@@ -26,8 +26,9 @@
 //                                                  → eenmalig aanvullen van gezin.energie_kwartier (max. 31 dagen per oproep):
 //                                                     "uur" voor oudere dagen (langetermijnstatistieken), "kwartier" voor de
 //                                                     laatste KW_DAGEN dagen (5-minutenstatistieken)
-//       { actie: "regels", aan: true|false }       → laadregel van de aangesloten wagen volgen (true) of pauzeren voor deze sessie (false);
+//       { actie: "regels", aan: true|false, modus } → volgens plan (aan) of overrulen tot uitpluggen: modus now | smart (alleen zon) | off;
 //                                                     manuele acties (laadmodus, toch, altijd) pauzeren de regel ook. Sturing zelf: laadpaal-bewaking
+//       { actie: "doel", uur?: "HH:MM", kwh? }      → doel van de lopende sessie (leeg = standaard van de wagen)
 //       { actie: "tick", token }                   → pg_cron: vensters toepassen bij een overgang, en buiten het venster
 //                                                     om de 5 min nakijken of evcc nog op Uit staat (bewaking)
 
@@ -194,7 +195,7 @@ async function haWaarde(id: string | null) {
   } catch { return null; }
 }
 async function wagensLees(auth: string, st: Awaited<ReturnType<typeof evccStatus>>): Promise<Wagen[]> {
-  const r = await fetch(`${SB_URL}/rest/v1/wagens?select=id,evcc_titel,soc_sensor,bereik_sensor,soc_tijd_sensor,soc_max_min,volgorde,regel_modus&order=volgorde`, { headers: { apikey: SB_ANON, Authorization: auth, "Accept-Profile": "gezin" } });
+  const r = await fetch(`${SB_URL}/rest/v1/wagens?select=id,evcc_titel,soc_sensor,bereik_sensor,soc_tijd_sensor,soc_max_min,volgorde,regel_modus&standaard=is.false&order=volgorde`, { headers: { apikey: SB_ANON, Authorization: auth, "Accept-Profile": "gezin" } });
   const cfg = (r.ok ? await r.json() : []) as { id: string; evcc_titel: string; soc_sensor: string | null; bereik_sensor: string | null; soc_tijd_sensor: string | null; soc_max_min: number | null; regel_modus: string | null }[];
   const namen = [...cfg.map((c) => c.evcc_titel), ...st.voertuigen.filter((t) => !cfg.some((c) => c.evcc_titel === t))];
   const lp = st.laadpunt;
@@ -593,8 +594,8 @@ async function dagkostLees(auth: string, huishouden: string, dagen: unknown) {
 
 async function statusVoor(auth: string, sturen: boolean) {
   const [st, venster, dagprijzen] = await Promise.all([evccStatus(), vensterLees(auth), dagprijzenLees(auth).catch(() => null)]);
-  const wagens = await wagensLees(auth, st).catch(() => [] as Wagen[]);
-  return { ...st, wagens, venster, dagprijzen, magSturen: sturen };
+  const [wagens, sessie] = await Promise.all([wagensLees(auth, st).catch(() => [] as Wagen[]), rpc(auth, "laadsessie_status").catch(() => null)]);
+  return { ...st, wagens, sessie, venster, dagprijzen, magSturen: sturen };
 }
 // Pas de vensters toe die een overgang hebben (aangeroepen door pg_cron of na een wijziging)
 async function vensterToepassen(token: string) {
@@ -708,9 +709,21 @@ Deno.serve(async (req) => {
       await new Promise((r) => setTimeout(r, 800));
       return antwoord(await statusVoor(auth, true));
     }
-    if (actie === "regels") {   // knop "Regels overrulen": aan = regels volgen, uit = gepauzeerd voor de lopende sessie
-      const r = await rpc(auth, "laadregel_overrule", { p_aan: !body.aan, p_reden: "knop Regels overrulen in Kring" });
-      return antwoord({ ...(await statusVoor(auth, true)), melding: r?.ok ? "" : (r?.melding || "") });
+    if (actie === "regels") {   // aan = volgens plan; anders overrulen tot uitpluggen met modus now (nu laden) | smart (alleen zon) | off (niet laden)
+      const m = ["now", "smart", "off"].includes(body.modus) ? body.modus : null;
+      if (!body.aan && !m) return antwoord({ fout: "Kies Nu laden, Alleen zon of Niet laden" }, 400);
+      const naam: Record<string, string> = { now: "Nu laden", smart: "Alleen zon", off: "Niet laden" };
+      const r = await rpc(auth, "laadregel_overrule", { p_aan: !body.aan, p_reden: body.aan ? null : `${naam[m!]} (Kring)`, p_modus: body.aan ? null : m });
+      if (r?.ok && !body.aan) { await haDienst("kring_evcc_alwayscharge", { waarde: "off" }).catch(() => null); await haDienst("kring_evcc_mode", { mode: m }); await new Promise((x) => setTimeout(x, 800)); }
+      if (r?.ok && body.aan) await rpc(`Bearer ${SB_SERVICE}`, "laadbewaking_start", {}, SB_SERVICE).catch(() => null);   // regel meteen laten sturen
+      return antwoord({ ...(await statusVoor(auth, true)), melding: r?.ok ? (body.aan ? "Volgens plan: de regel neemt het over" : `${naam[m!]} tot de wagen uitgeplugd wordt`) : (r?.melding || "") });
+    }
+    if (actie === "doel") {   // doel voor de lopende sessie: uur "HH:MM" en/of kWh; beide leeg = standaard van de wagen
+      const uur = typeof body.uur === "string" && body.uur ? body.uur : null, kwh = body.kwh === null || body.kwh === "" || body.kwh === undefined ? null : Number(body.kwh);
+      if (kwh !== null && !(kwh >= 0 && kwh <= 100)) return antwoord({ fout: "Ongeldig aantal kWh" }, 400);
+      const r = await rpc(auth, "laadsessie_doel", { p_uur: uur, p_kwh: kwh });
+      if (r?.ok) await rpc(`Bearer ${SB_SERVICE}`, "laadbewaking_start", {}, SB_SERVICE).catch(() => null);
+      return antwoord({ ...(await statusVoor(auth, true)), melding: r?.ok ? (uur || kwh !== null ? "Doel aangepast voor deze sessie" : "Standaarddoel") : (r?.melding || "") });
     }
     if (actie === "minstroom") {
       const a = Number(body.ampere);
