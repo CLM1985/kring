@@ -5115,6 +5115,29 @@ body:not(.breed) .en-kost{order:10}
 .en-kost .en-leg i.en-k{width:10px;height:10px}
 .en-kost .en-leg i.en-p{width:8px;height:8px;border-radius:50%;background:var(--fg)}
 .en-kost .en-let{font-size:.8rem;color:var(--muted);margin:6px 0 0}
+/* Verbruik doorheen de dag (cumulatief), per apparaat, stroom per apparaat */
+.en-cum .en-kop,.en-app .en-kop,.en-sankey .en-kop{flex-wrap:wrap;align-items:center}
+.en-cum svg,.en-sankey svg{display:block;width:100%;height:auto}
+.en-cum svg text,.en-sankey svg text{font-size:11px;fill:var(--muted);font-variant-numeric:tabular-nums}
+.en-sankey svg text.en-sk-l{fill:var(--fg)}
+.en-cum .seg button{padding:6px 12px}
+.en-slecht{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+.en-slecht li{display:flex;justify-content:space-between;align-items:center;gap:10px;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.en-slecht li b{display:block;font-variant-numeric:tabular-nums}
+.en-slecht li span{font-size:.8rem;color:var(--muted)}
+.en-slecht li strong{color:var(--en-duur);font-variant-numeric:tabular-nums;white-space:nowrap}
+.en-app-r{display:grid;grid-template-columns:minmax(0,7.5rem) minmax(0,1fr) 3.2rem 2.6rem;gap:8px;align-items:center;font-size:.88rem;padding:3px 0}
+.en-app-r .n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.en-app-r .b{display:flex;height:16px}
+.en-app-r .b i{display:block;height:100%}
+.en-app-r .b i:first-child{border-radius:4px 0 0 4px}.en-app-r .b i:last-child{border-radius:0 4px 4px 0}.en-app-r .b i:only-child{border-radius:4px}
+.en-app-r .k,.en-app-r .p{text-align:right;font-variant-numeric:tabular-nums}
+.en-app-r .k{color:var(--muted)}
+.en-app-kop{font-size:.78rem;color:var(--muted)}
+.en-app-kop .b{height:auto}
+.en-inzicht{font-size:.88rem;margin:10px 0 0;line-height:1.45}
+.en-cum .en-let,.en-app .en-let,.en-sankey .en-let{font-size:.8rem;color:var(--muted);margin:6px 0 0;line-height:1.4}
+.en-cum .en-uitleg{font-size:.85rem;color:var(--muted)}
 </style>
 <script>/* Kring – rekenregels energie: beste startmoment per toestel uit kwartierprijzen (Frank via evcc) en zonneverwachting.
    Zuivere functies (ook testbaar met node). Tijden in seconden (Unix), vermogens in kW, prijzen in €/kWh. */
@@ -5238,8 +5261,12 @@ function enDemoHist(gisteren) {
   const t0 = d.getTime() / 1000, nu = gisteren ? t0 + 86400 + KW : Date.now() / 1000, net = [], zon = [], wagen = [];
   for (let t = t0; t < nu - KW; t += KW) { const u = (t - t0) / 3600, z = u > 8 && u < 17 ? Math.round(3000 * Math.sin((u - 8) / 9 * Math.PI)) : 0;
     const c = u >= 11 && u < 14 ? 3400 : 0, v = 350 + (u >= 7 && u < 8 ? 900 : 0) + (u >= 18 && u < 19.5 ? 2600 : 0) + c; zon.push([t, z]); net.push([t, v - z]); wagen.push([t, c]); }
-  if (!gisteren) return { net, zon, wagen };
-  return { net, zon, wagen, prijzen: enDemoStatus("smart").prijzen.map(p => [p[0] - 86400, p[1] - 86400, +(p[2] * 0.95).toFixed(4)]) };
+  // Demo-apparaten (kWh per kwartier): wasmachine in de goedkope middag, droogkast en vaatwasser 's avonds
+  const app = (id, naam, f) => ({ id, naam, ouder: null, kwh: net.map(([t]) => [t, +f((t - t0) / 3600).toFixed(4)]).filter(x => x[1] > 0) });
+  const apparaten = [app("sensor.wasmachine", "Wasmachine", u => u >= 12 && u < 14 ? 0.35 : 0), app("sensor.droogkast", "Droogkast", u => u >= 17 && u < 18.5 ? 0.3 : 0),
+    app("sensor.vaatwasser", "Vaatwasser", u => u >= 18 && u < 19.5 ? 0.3 : 0), app("sensor.diepvriezer", "Diepvriezer", () => 0.007), app("sensor.boiler", "Boiler", u => u >= 13 && u < 15 ? 0.06 : 0)];
+  if (!gisteren) return { net, zon, wagen, apparaten };
+  return { net, zon, wagen, apparaten, prijzen: enDemoStatus("smart").prijzen.map(p => [p[0] - 86400, p[1] - 86400, +(p[2] * 0.95).toFixed(4)]) };
 }
 /* Demo: kost per dag (fictief: ±12 kWh afname, zon wisselend, af en toe laden) */
 function enDemoKost() {
@@ -5290,6 +5317,12 @@ window.EN_SUPA = {
     return data;
   },
   async loadEnergie(actie, extra) { return this.enRoep({ actie, ...(extra || {}) }); },
+  async loadApparaten(dag) {
+    const { data, error } = await this.sb.functions.invoke("ha-apparaten", { body: { dag } });
+    if (error) { let m = error.message; try { const j = await error.context.json(); m = j.fout || m; } catch (_) { /* */ } throw new Error(m); }
+    if (data && data.fout) throw new Error(data.fout);
+    return data;
+  },
   async zetLaadmodus(m) { return this.enRoep({ actie: "laadmodus", modus: m }); },
   async zetVenster(actief, van, tot) { return this.enRoep({ actie: "venster", actief, van, tot }); },
   async zetStroom(a) { return this.enRoep({ actie: "stroom", ampere: a }); },
@@ -5309,11 +5342,17 @@ const enUur = t => new Date(t * 1000).toLocaleTimeString("nl-BE", { hour: "2-dig
 const enDag = t => { const f = d => d.toLocaleDateString("nl-BE", { timeZone: "Europe/Brussels" }), a = f(new Date(t * 1000)), n = new Date();
   return a === f(n) ? "" : a === f(new Date(n.getTime() - 864e5)) ? "gisteren " : a === f(new Date(n.getTime() + 864e5)) ? "morgen " : ""; };
 
+/* Apparaten (ha-apparaten) bij de historiek van een dag zetten; een fout daar mag de rest van de pagina niet tegenhouden */
+async function enMetApparaten(hist, dag) {
+  if (!hist || hist.apparaten || !db.loadApparaten) return hist;
+  try { hist.apparaten = (await db.loadApparaten(dag)).apparaten || []; } catch (x) { console.warn("apparaten:", x); hist.apparatenFout = x.message || String(x); }
+  return hist;
+}
 async function herlaadEnergie(metHist) {
   const e = S.en = S.en || {};
   e.laden = true;
   try {
-    const [st, hi] = await Promise.all([db.loadEnergie("status"), metHist || !e.hist || Date.now() - (e.histT || 0) > 5 * 60e3 ? db.loadEnergie("historiek").catch(x => { console.warn("historiek:", x); return e.hist || null; }) : null]);
+    const [st, hi] = await Promise.all([db.loadEnergie("status"), metHist || !e.hist || Date.now() - (e.histT || 0) > 5 * 60e3 ? db.loadEnergie("historiek").then(x => enMetApparaten(x, "vandaag")).catch(x => { console.warn("historiek:", x); return e.hist || null; }) : null]);
     e.status = st; e.fout = null; e.t = Date.now();
     if (hi) { e.hist = hi; e.histT = Date.now(); }
     if (!e.wagenCfg && db.loadWagens) e.wagenCfg = await db.loadWagens().catch(x => { console.warn("wagens:", x); return null; });
@@ -5327,6 +5366,7 @@ function viewEnergie() {
   if (!e.status) { $("#view").innerHTML = `<div class="en-kop"><h2>Energie</h2><button class="knop sec klein" data-envernieuw>Opnieuw</button></div><div class="en-fout"><b>Geen verbinding met Home Assistant.</b><br>${esc(e.fout)}</div>`; return; }
   const s = e.status, L = s.live || {}, lp = s.laadpunt || {}, ex = KringEnergie.dagExtremen(s);
   const adv = KringEnergie.advies(s);
+  let D; try { D = enDagData(s); } catch (x) { console.error(x); D = { leeg: "Verbruik per dag kon niet berekend worden." }; }
 
   const laadSt = !lp.verbonden ? "Geen wagen aangesloten" : lp.laadt ? `Laadt aan ${enKw(lp.vermogen)} kW` : "Aangesloten, laadt nu niet";
   const modusUitleg = { off: "Laden staat uit, ook als de wagen aangesloten is.", smart: lp.altijdLaden === "on" ? `Laadt altijd minstens aan ${lp.minA || 6} A (±${enKw((lp.minA || 6) * 230)} kW); bij zon gaat het hoger.` : "Laadt alleen op zonne-overschot of goedkope kwartieren. Bij weinig zon laadt hij dus niet: zet dan Altijd laden aan.", now: `Laadt meteen op vol vermogen, binnen de grens van ${enKw(L.netLimiet || 4500)} kW voor het hele huis.` }[lp.modus] || "";
@@ -5355,6 +5395,9 @@ function viewEnergie() {
       <section class="en-blok en-grafiek"><div class="en-kop" style="margin-bottom:8px"><h3 style="margin:0">Prijs en verbruik</h3>
         <div class="seg" role="group" aria-label="Dag">${[[-1, "Gisteren"], [0, "Vandaag"], [1, "Morgen"]].map(([k, l]) => `<button data-endag="${k}" aria-pressed="${(S.enDag || 0) === k}">${l}</button>`).join("")}</div></div>
         ${enKaartHtml(s, e.hist, adv)}</section>
+      <section class="en-blok en-cum">${enCumHtml(s, D)}</section>
+      <section class="en-blok en-app">${enAppHtml(s, D)}</section>
+      <section class="en-blok en-sankey">${enSankeyHtml(s, D)}</section>
       ${enKostBlok()}
     </div><div class="en-col">${laad}${advHtml}</div></div>`;
   enKaartHover();
@@ -5653,9 +5696,193 @@ function enKaartHtml(s, h, adv) {
 
 function enLaadGisteren(t0) {
   const e = S.en = S.en || {}; e.gisterenLaden = true; e.gisterenFout = null;
-  db.loadEnergie("historiek", { dag: "gisteren" })
+  db.loadEnergie("historiek", { dag: "gisteren" }).then(g => enMetApparaten(g, "gisteren"))
     .then(g => { e.gisteren = { ...g, van: t0 }; }, x => { e.gisterenFout = x.message || String(x); })
     .finally(() => { e.gisterenLaden = false; if (S.tab === "energie") viewEnergie(); });
+}
+
+/* ---------- Verbruik doorheen de dag, per apparaat en stroom per apparaat (22/11/2026) ----------
+   Zelfde dagkeuze als "Prijs en verbruik" (gisteren / vandaag) en dezelfde uurzones (goedkoop / normaal / duur, relatief aan die dag).
+   Bron: ha-energie "historiek": net, zon en wagen per kwartier (W) en kWh per kwartier per apparaat uit het energiedashboard van HA.
+   Prijzen all-in: vandaag uit evcc (s.prijzen), gisteren uit de Frank-sensor (h.prijzen). */
+const EN_APP_KLEUR = ["#5b8def", "#c9a54a", "#3fb58a", "#6fb0a0", "#9a8cc8", "#d07fa8", "#7f9fbf"];
+const enKwh2 = v => Number(v).toLocaleString("nl-BE", { minimumFractionDigits: v < 10 ? 1 : 0, maximumFractionDigits: v < 10 ? 2 : 1 });
+function enApparaten(h, t0, t1) {
+  const l = (h.apparaten || []).map(a => { const m = new Map(); let tot = 0;
+    for (const [q, k] of a.kwh || []) if (q >= t0 && q < t1) { m.set(q, (m.get(q) || 0) + k); tot += k; }
+    return { id: a.id, naam: a.naam, ouder: a.ouder, m, tot }; });
+  // De wagen apart (REST-sensor op evcc) als hij niet als apparaat in het energiedashboard staat
+  if (!l.some(a => /wagen|laad|evcc/i.test(a.naam + " " + a.id))) {
+    const m = new Map(); let tot = 0;
+    for (const [q, w] of h.wagen || []) if (q >= t0 && q < t1 && w > 0) { m.set(q, w / 4000); tot += w / 4000; }
+    if (tot >= 0.05) l.push({ id: "wagen", naam: "Wagen", ouder: null, m, tot });
+  }
+  const ids = new Set(l.map(a => a.id));
+  for (const a of l) if (a.ouder && !ids.has(a.ouder)) a.ouder = null;
+  return l.sort((a, b) => b.tot - a.tot);
+}
+function enDagData(s) {
+  const e = S.en || {}, dagOff = S.enDag || 0;
+  const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + dagOff); const t0 = d.getTime() / 1000;
+  const d1 = new Date(d); d1.setDate(d1.getDate() + 1); const t1 = d1.getTime() / 1000;
+  if (dagOff > 0) return { dagOff, leeg: "Voor morgen is er nog geen verbruik: kies Vandaag of Gisteren." };
+  let h = e.hist;
+  if (dagOff < 0) { h = e.gisteren && e.gisteren.van === t0 ? e.gisteren : null; if (!h) return { dagOff, leeg: e.gisterenFout ? "Gisteren ophalen mislukt." : "Gisteren ophalen…" }; }
+  if (!h || !(h.net || []).some(p => p[0] >= t0 && p[0] < t1)) return { dagOff, leeg: "Nog geen meetgegevens voor deze dag." };
+  const prijs = new Map();
+  for (const [a, b, p] of (dagOff < 0 ? h.prijzen : s.prijzen) || []) if (p != null) for (let q = Math.floor(a / 900) * 900; q < b; q += 900) if (q >= t0 && q < t1) prijs.set(q, p);
+  const uur = new Map();
+  for (const [q, p] of prijs) { const u = Math.floor(q / 3600) * 3600; if (!uur.has(u)) uur.set(u, []); uur.get(u).push(p); }
+  const uurGem = new Map([...uur].map(([u, v]) => [u, v.reduce((a, x) => a + x, 0) / v.length]));
+  const zones = enZones([...uurGem.values()]);
+  const zone = q => { const g = uurGem.get(Math.floor(q / 3600) * 3600); return g == null ? "normaal" : enZoneVan(zones, g); };
+  const gem = prijs.size ? [...prijs.values()].reduce((a, x) => a + x, 0) / prijs.size : null;
+  const zon = new Map(h.zon || []);
+  const kw = (h.net || []).filter(p => p[0] >= t0 && p[0] < t1).sort((a, b) => a[0] - b[0]).map(([q, n]) => { const z = Math.max(0, zon.get(q) || 0);
+    return { q, af: Math.max(0, n) / 4000, inj: Math.max(0, -n) / 4000, thuis: Math.max(0, n + z) / 4000, p: prijs.get(q), zone: zone(q) }; });
+  return { dagOff, t0, t1, h, kw, gem, zone, uurGem, apparaten: enApparaten(h, t0, t1) };
+}
+const enNiceMax = v => { const s = [0.5, 1, 2, 2.5, 5, 10, 20, 25, 50, 100]; const m = Math.max(v, 0.01) * 1.08; for (const x of s) if (m <= x * 4) return x * 4; return Math.ceil(m / 100) * 100; };
+// Welke apparaten verbruikten het meest in uur u (kWh ≥ 0,1)? Een ouder valt weg als een kind er al staat.
+function enAppInUur(D, u) {
+  const l = D.apparaten.map(a => { let k = 0; for (let q = u; q < u + 3600; q += 900) k += a.m.get(q) || 0; return { a, k }; }).filter(x => x.k >= 0.1).sort((x, y) => y.k - x.k);
+  return l.filter(x => !l.some(y => y.a.ouder === x.a.id)).slice(0, 2).map(x => x.a.naam);
+}
+
+function enCumHtml(s, D) {
+  const eur = S.enCum === "eur";
+  const kop = `<div class="en-kop" style="margin-bottom:8px"><h3 style="margin:0">Verbruik doorheen de dag</h3>
+    <div class="seg" role="group" aria-label="Eenheid">${[["kwh", "kWh van het net"], ["eur", "Kosten €"]].map(([k, l]) => `<button data-encum="${k}" aria-pressed="${(S.enCum || "kwh") === k}">${l}</button>`).join("")}</div></div>`;
+  if (D.leeg) return kop + `<p class="muted">${esc(D.leeg)}</p>`;
+  const nu = Date.now() / 1000, kw = D.kw;
+  let cum = 0, afT = 0, eurT = 0, duurK = 0, effect = 0, zonderPrijs = 0;
+  const pts = [[D.t0, 0, kw.length ? kw[0].zone : "normaal"]], perUur = new Map();
+  for (const k of kw) {
+    cum += eur ? (k.p != null ? k.af * k.p : 0) : k.af; pts.push([k.q + 900, cum, k.zone]);
+    afT += k.af; if (k.zone === "duur") duurK += k.af;
+    if (k.p != null) { eurT += k.af * k.p; if (D.gem != null) effect += k.af * (k.p - D.gem); } else if (k.af > 0.001) zonderPrijs++;
+    const u = Math.floor(k.q / 3600) * 3600, x = perUur.get(u) || { u, kwh: 0, meer: 0, eur: 0 };
+    x.kwh += k.af; if (k.p != null) { x.eur += k.af * k.p; if (D.gem != null) x.meer += k.af * (k.p - D.gem); } perUur.set(u, x);
+  }
+  // Grafiek
+  const W = Math.max(320, Math.min(1100, ($("#view") && $("#view").clientWidth || 700) - (document.body.classList.contains("breed") ? 440 : 30)));
+  const P = { l: 40, r: 8, t: 18, b: 22 }, iw = W - P.l - P.r, ih = 150, H = P.t + ih + P.b;
+  const yMax = enNiceMax(cum), x = t => P.l + (t - D.t0) / (D.t1 - D.t0) * iw, y = v => P.t + ih - v / yMax * ih;
+  const ticks = [0, 1, 2, 3, 4].map(i => yMax * i / 4);
+  const fmtY = v => eur ? "€" + v.toLocaleString("nl-BE", { maximumFractionDigits: yMax < 4 ? 1 : 0 }) : v.toLocaleString("nl-BE", { maximumFractionDigits: 1 });
+  let banden = "";
+  for (let u = D.t0; u < D.t1; u += 3600) { if (!D.uurGem.has(u)) continue; const z = D.zone(u); if (z === "normaal") continue;
+    banden += `<rect x="${x(u).toFixed(1)}" y="${P.t}" width="${(x(u + 3600) - x(u)).toFixed(1)}" height="${ih}" fill="${EN_KLEUR[z]}" opacity=".13"/>`; }
+  const segs = []; for (let i = 1; i < pts.length; i++) { const z = pts[i][2], l = segs[segs.length - 1];
+    if (l && l.z === z) l.p.push(pts[i]); else segs.push({ z, p: [pts[i - 1], pts[i]] }); }
+  const xy = p => `${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`;
+  const lijnen = segs.map(sg => `<polyline points="${sg.p.map(xy).join(" ")}" fill="none" stroke="${EN_KLEUR[sg.z]}" stroke-width="${sg.z === "normaal" ? 2.5 : 3.2}" stroke-linejoin="round" stroke-linecap="round"/>`).join("");
+  const laatste = pts[pts.length - 1];
+  const vlak = `<polygon points="${pts.map(xy).join(" ")} ${x(laatste[0]).toFixed(1)},${y(0)} ${x(D.t0).toFixed(1)},${y(0)}" fill="var(--en-net)" opacity=".07"/>`;
+  // Steilste dure uur aanduiden
+  const uren = [...perUur.values()];
+  const steil = uren.filter(o => D.zone(o.u) === "duur" && o.kwh >= 0.3).sort((a, b) => b.kwh - a.kwh)[0];
+  let markering = "";
+  if (steil) { const ta = steil.u + 1800, i = pts.findIndex(p => p[0] >= ta), v = i > 0 ? pts[i][1] : 0, mx = x(ta), my = y(v);
+    markering = `<circle cx="${mx.toFixed(1)}" cy="${my.toFixed(1)}" r="5" fill="none" stroke="var(--en-duur)" stroke-width="2"/>
+      <text x="${(mx - 8).toFixed(1)}" y="${Math.max(P.t + 10, my - 10).toFixed(1)}" text-anchor="end" style="fill:var(--fg);font-weight:600">${enUur(steil.u).slice(0, 2)}–${enUur(steil.u + 3600).slice(0, 2)}u: +${enKwh2(steil.kwh)} kWh</text>`; }
+  const uurL = []; for (let t = D.t0; t <= D.t1; t += 6 * 3600) uurL.push(t);
+  const svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Cumulatief ${eur ? "kosten" : "afname van het net"} ${D.dagOff ? "gisteren" : "vandaag"}: ${eur ? enEur0(cum) : enKwh2(cum) + " kWh"}, ${enKwh2(duurK)} kWh in dure uren">
+    ${banden}
+    ${ticks.map(v => `<line class="${v === 0 ? "en-nul" : "en-grid-l"}" x1="${P.l}" x2="${W - P.r}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/><text x="${P.l - 5}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">${fmtY(v)}</text>`).join("")}
+    ${vlak}${lijnen}${markering}
+    ${uurL.map(t => `<text x="${x(t).toFixed(1)}" y="${H - 4}" text-anchor="middle">${enUur(t).replace(":00", "")}u</text>`).join("")}
+    ${D.dagOff === 0 && nu < D.t1 ? `<line class="en-nu" x1="${x(nu).toFixed(1)}" x2="${x(nu).toFixed(1)}" y1="${P.t - 4}" y2="${P.t + ih}"/>` : ""}
+  </svg>`;
+  // Tegels
+  const ctE = Math.round(effect * 100);
+  const tegels = `<div class="en-kost-tegels">
+    <div class="en-kost-tegel"><span>Afname</span><b>${enKwh2(afT)} kWh</b><small>${enEur0(eurT)}${zonderPrijs ? " (deels zonder prijs)" : ""}</small></div>
+    <div class="en-kost-tegel"><span>In dure uren</span><b style="color:var(--en-duur)">${enKwh2(duurK)} kWh</b><small>${afT > 0.05 ? Math.round(duurK / afT * 100) : 0} % van de afname</small></div>
+    <div class="en-kost-tegel"><span>Timing-effect</span><b style="color:${ctE > 0 ? "var(--en-duur)" : ctE < 0 ? "var(--en-goedkoop)" : "var(--fg)"}">${ctE > 0 ? "+" : ctE < 0 ? "−" : ""}${Math.abs(ctE)} ct</b><small>vs. daggemiddelde ${D.gem != null ? enCt(D.gem) : "–"}</small></div></div>`;
+  // Slechtste momenten
+  const slecht = uren.filter(o => o.meer >= 0.005).sort((a, b) => b.meer - a.meer).slice(0, 3);
+  const lijst = slecht.length ? `<h4 style="margin:12px 0 0;font-size:.95rem">Slechtste momenten ${D.dagOff ? "gisteren" : "vandaag"}</h4><ul class="en-slecht">${slecht.map(o => {
+      const app = enAppInUur(D, o.u), p = o.kwh > 0 ? o.eur / o.kwh : D.uurGem.get(o.u);
+      return `<li><div><b>${enUur(o.u).slice(0, 2)}–${enUur(o.u + 3600).slice(0, 2)}u · ${enKwh2(o.kwh)} kWh</b><span>${p != null ? enCt(p) : ""}${app.length ? " · " + esc(app.join(" + ").toLowerCase()) : " · niet apart gemeten"}</span></div><strong>+${Math.round(o.meer * 100)} ct</strong></li>`; }).join("")}</ul>`
+    : `<p class="en-let">Geen uren met merkbare meerkost: het verbruik viel niet in de dure uren.</p>`;
+  return kop + tegels + `<div class="en-kaart">${svg}</div>` +
+    `<div class="en-leg"><span><i style="background:var(--en-goedkoop)"></i>goedkoop uur</span><span><i style="background:var(--en-normaal)"></i>normaal</span><span><i style="background:var(--en-duur)"></i>duur uur</span></div>` +
+    `<p class="en-let">Hoe steiler de lijn, hoe meer we op dat moment van het net halen. Een steil oranje stuk = veel verbruik in een duur uur.</p>` + lijst +
+    `<details class="en-meer"><summary>Hoe wordt dit berekend?</summary><p class="en-uitleg">Afname van het net per kwartier (P1-meter) × de all-in prijs van dat kwartier. Meerkost van een uur = kWh × (prijs − gemiddelde prijs van de dag); het timing-effect is die som over de hele dag: negatief = goedkoper dan wanneer alles aan de gemiddelde prijs was verbruikt. Eigen zon telt hier niet mee (die kost geen afname).</p></details>`;
+}
+
+function enAppHtml(s, D) {
+  const kop = `<div class="en-kop" style="margin-bottom:6px"><h3 style="margin:0">Per apparaat</h3><span class="muted">${D.dagOff ? "gisteren" : "vandaag"} · kWh</span></div>`;
+  if (D.leeg) return kop + `<p class="muted">${esc(D.leeg)}</p>`;
+  if (D.h.apparatenFout) return kop + `<p class="muted">Apparaten ophalen mislukt: ${esc(D.h.apparatenFout)}</p>`;
+  const l = D.apparaten.filter(a => a.tot > 0.005);
+  if (!l.length) return kop + `<p class="muted">Geen individuele apparaten met verbruik. Voeg meetstekkers toe in Home Assistant bij Energie → Individuele apparaten.</p>`;
+  const split = a => { const z = { goedkoop: 0, normaal: 0, duur: 0 }; for (const [q, k] of a.m) z[D.zone(q)] += k; return z; };
+  const groot = l.filter(a => a.tot >= 0.15).slice(0, 10), rest = l.filter(a => !groot.includes(a));
+  const rijen = groot.map(a => ({ naam: a.naam, tot: a.tot, z: split(a) }));
+  if (rest.length) { const z = { goedkoop: 0, normaal: 0, duur: 0 }; let tot = 0; for (const a of rest) { const s2 = split(a); for (const k in z) z[k] += s2[k]; tot += a.tot; }
+    rijen.push({ naam: `Overige (${rest.length})`, tot, z, overig: true }); }
+  const max = Math.max(...rijen.map(r => r.tot), 0.1);
+  const rij = r => { const pd = r.tot > 0 ? Math.round(r.z.duur / r.tot * 100) : 0;
+    const bar = ["goedkoop", "normaal", "duur"].filter(k => r.z[k] > 0.0005).map(k => `<i style="width:${(r.z[k] / max * 100).toFixed(2)}%;background:${EN_KLEUR[k]}"></i>`).join("");
+    return `<div class="en-app-r"><span class="n"${r.overig ? ' style="color:var(--muted)"' : ""} title="${esc(r.naam)}">${esc(r.naam)}</span><span class="b" role="img" aria-label="${esc(r.naam)}: ${enKwh2(r.tot)} kWh, ${pd} % in dure uren">${bar}</span><span class="k">${enKwh2(r.tot)}</span><span class="p" style="${pd >= 50 ? "color:var(--en-duur);font-weight:700" : r.tot >= 0.3 && r.z.goedkoop / r.tot >= 0.5 ? "color:var(--en-goedkoop);font-weight:700" : ""}">${pd} %</span></div>`; };
+  const slecht = rijen.filter(r => !r.overig && r.tot >= 0.4 && r.z.duur / r.tot >= 0.5).map(r => r.naam);
+  const goed = rijen.filter(r => !r.overig && r.tot >= 0.4 && r.z.goedkoop / r.tot >= 0.5).map(r => r.naam);
+  const opsom = n => n.length > 1 ? n.slice(0, -1).join(", ") + " en " + n[n.length - 1] : n[0];
+  const inzicht = [goed.length ? `${esc(opsom(goed))} ${goed.length > 1 ? "liepen" : "liep"} goed (vooral in goedkope uren).` : "",
+    slecht.length ? `<b style="color:var(--en-duur)">${esc(opsom(slecht))}</b> ${slecht.length > 1 ? "draaiden" : "draaide"} grotendeels in dure uren: de eerste kandidaten om te verschuiven.` : ""].filter(Boolean).join(" ");
+  return kop + `<div class="en-leg" style="margin-top:0"><span><i style="background:var(--en-goedkoop)"></i>goedkoop uur</span><span><i style="background:var(--en-normaal)"></i>normaal</span><span><i style="background:var(--en-duur)"></i>duur uur</span></div>
+    <div class="en-app-r en-app-kop"><span></span><span class="b"></span><span class="k">kWh</span><span class="p">duur</span></div>
+    ${rijen.map(rij).join("")}
+    ${inzicht ? `<p class="en-inzicht">${inzicht}</p>` : ""}
+    <p class="en-let">Kleur = prijsklasse van het uur waarin het apparaat verbruikte (ook als de zon het toen leverde). Apparaten komen uit het energiedashboard van Home Assistant: een nieuwe meetstekker verschijnt hier zodra hij daar bij Individuele apparaten staat.</p>`;
+}
+
+function enSankeyHtml(s, D) {
+  const kop = `<div class="en-kop" style="margin-bottom:6px"><h3 style="margin:0">Waar ging de stroom naartoe?</h3><span class="muted">${D.dagOff ? "gisteren" : "vandaag"} · kWh</span></div>`;
+  if (D.leeg) return kop + `<p class="muted">${esc(D.leeg)}</p>`;
+  const af = { goedkoop: 0, normaal: 0, duur: 0 }; let zelf = 0, inj = 0, thuis = 0;
+  for (const k of D.kw) { af[k.zone] += k.af; zelf += Math.max(0, k.thuis - k.af); inj += k.inj; thuis += k.thuis; }
+  if (thuis < 0.05) return kop + `<p class="muted">Nog geen verbruik.</p>`;
+  const top = D.apparaten.filter(a => !a.ouder && a.tot > 0.005), somTop = top.reduce((a, x) => a + x.tot, 0);
+  const grens = Math.max(0.3, thuis * 0.04), named = top.filter(a => a.tot >= grens).slice(0, 6), overig = top.filter(a => !named.includes(a)).reduce((a, x) => a + x.tot, 0);
+  const niet = Math.max(0, thuis - somTop), T = Math.max(thuis, somTop);
+  const rechts = [...named.map((a, i) => ({ naam: a.naam, v: a.tot, kl: EN_APP_KLEUR[i % EN_APP_KLEUR.length] })),
+    ...(overig > 0.01 ? [{ naam: "Overig gemeten", v: overig, kl: "#9aa0ad" }] : []), ...(niet > 0.01 ? [{ naam: "Niet getraceerd", v: niet, kl: "var(--en-normaal)", niet: true }] : [])];
+  const Hh = 240, k = Hh / T, top0 = 22;
+  const links = [["goedkoop", af.goedkoop, EN_KLEUR.goedkoop], ["normaal", af.normaal, EN_KLEUR.normaal], ["duur", af.duur, EN_KLEUR.duur]].filter(x => x[1] > 0.005);
+  let yl = top0; const L = links.map(([n, v, kl]) => { const r = { n, v, kl, a: yl, b: yl + v * k }; yl = r.b; return r; });
+  const netEind = yl; yl += 14;
+  const Z = zelf > 0.005 ? { v: zelf, a: yl, b: yl + zelf * k } : null; if (Z) yl = Z.b;
+  const mA = top0 + 6; let ym = mA;
+  const band = (x1, a1, b1, x2, a2, b2, kl, op) => { const xm = (x1 + x2) / 2;
+    return `<path d="M${x1} ${a1.toFixed(1)} C${xm} ${a1.toFixed(1)},${xm} ${a2.toFixed(1)},${x2} ${a2.toFixed(1)} L${x2} ${b2.toFixed(1)} C${xm} ${b2.toFixed(1)},${xm} ${b1.toFixed(1)},${x1} ${b1.toFixed(1)} Z" fill="${kl}" opacity="${op}"/>`; };
+  let svgL = "";
+  for (const r of L) { svgL += band(10, r.a, r.b, 120, ym, ym + r.v * k, r.kl, .35) + `<rect x="0" y="${r.a.toFixed(1)}" width="10" height="${Math.max(1, r.b - r.a).toFixed(1)}" fill="${r.kl}"/>`;
+    if (r.b - r.a >= 12) svgL += `<text class="en-sk-l" x="16" y="${((r.a + r.b) / 2 + 4).toFixed(1)}">${r.n} ${enKwh2(r.v)}</text>`; ym += r.v * k; }
+  if (Z) { svgL += band(10, Z.a, Z.b, 120, ym, ym + Z.v * k, "var(--en-zon)", .4) + `<rect x="0" y="${Z.a.toFixed(1)}" width="10" height="${Math.max(1, Z.b - Z.a).toFixed(1)}" fill="var(--en-zon)"/>`;
+    svgL += `<text class="en-sk-l" x="16" y="${((Z.a + Z.b) / 2 + 4).toFixed(1)}" style="font-weight:700">Zon ${enKwh2(Z.v)}</text>`; }
+  const midH = T * k;
+  let yr = 14, yo = mA, svgR = "";
+  for (const r of rechts) { const h = Math.max(2, r.v * k);
+    svgR += band(130, yo, yo + r.v * k, 212, yr, yr + h, r.kl, r.niet ? .22 : .3) + `<rect x="212" y="${yr.toFixed(1)}" width="10" height="${h.toFixed(1)}" fill="${r.kl}"/>`;
+    const nm = r.naam.length > 17 ? r.naam.slice(0, 16) + "…" : r.naam;
+    svgR += `<text class="en-sk-l" x="228" y="${(yr + h / 2 + 4).toFixed(1)}">${esc(nm)} ${enKwh2(r.v)}${r.niet ? ` (${Math.round(r.v / thuis * 100)} %)` : ""}</text>`;
+    yo += r.v * k; yr += h + 6; }
+  const H = Math.max(yl, yr, mA + midH) + 22;
+  const afT = af.goedkoop + af.normaal + af.duur;
+  const svg = `<svg viewBox="0 0 360 ${H.toFixed(0)}" role="img" aria-label="Energiestroom: ${enKwh2(afT)} kWh van het net (${links.map(r => r[0] + " " + enKwh2(r[1])).join(", ")}) en ${enKwh2(zelf)} kWh eigen zon naar huis, ${enKwh2(thuis)} kWh totaal; ${rechts.map(r => r.naam + " " + enKwh2(r.v)).join(", ")}">
+    <text class="en-sk-l" x="0" y="12" style="font-weight:700">Net ${enKwh2(afT)}</text>
+    ${svgL}
+    <rect x="120" y="${mA}" width="10" height="${midH.toFixed(1)}" fill="var(--fg)" opacity=".75"/>
+    <text class="en-sk-l" x="125" y="${mA - 6}" text-anchor="middle" style="font-weight:700">Thuis ${enKwh2(thuis)}</text>
+    ${svgR}
+    ${inj > 0.05 ? `<text x="0" y="${(H - 6).toFixed(0)}">+${enKwh2(inj)} kWh zon teruggeleverd aan het net</text>` : ""}
+  </svg>`;
+  const nietPct = Math.round(niet / thuis * 100);
+  return kop + `<div class="en-kaart">${svg}</div>
+    <p class="en-let">De afname van het net is opgesplitst per prijsklasse van het uur, zodat je meteen ziet hoeveel in dure uren viel.${nietPct >= 25 ? ` ${nietPct} % is niet getraceerd: alles zonder meetstekker (verlichting, stopcontacten, sluipverbruik).` : ""}</p>`;
 }
 
 function enKaartHover() {
@@ -5783,6 +6010,8 @@ document.addEventListener("click", ev => {
   const dg = ev.target.closest("[data-endag]");
   const sm = ev.target.closest("[data-enstroom]");
   if (sm) { S.enStroom = sm.dataset.enstroom; viewEnergie(); return; }
+  const cm = ev.target.closest("[data-encum]");
+  if (cm) { S.enCum = cm.dataset.encum; viewEnergie(); return; }
   if (dg) { S.enDag = +dg.dataset.endag; if (S.en) S.en.gisterenFout = null; viewEnergie(); return; }
   const b = ev.target.closest("[data-enmodus],[data-envernieuw]"); if (!b) return;
   if ("envernieuw" in b.dataset) { run(async () => { await herlaadEnergie(true); if (S.tab === "energie") viewEnergie(); }); return; }
