@@ -2941,6 +2941,7 @@ function vrDemoItems(v, d){
 window.VR_LOCAL = {
   async loadVoorraad(){
     if (!this.d.voorraad) { this.d.voorraad = demoVoorraad(); vrDemoItems(this.d.voorraad, this.d); this.save(); }
+    if (!this.d.voorraad.barcodes) this.d.voorraad.barcodes = {};
     return JSON.parse(JSON.stringify(this.d.voorraad));
   },
   async vrTicketBewaren(t){
@@ -3004,7 +3005,9 @@ window.VR_LOCAL = {
   },
   async vrBewaarItem(id, w){ Object.assign(this.d.voorraad.items.find(x => x.id === id), w); this.save(); },
   async vrToevoegen(w){ const it = { id: uid(), op_op: null, binnen_op: iso(new Date()), ...w }; this.d.voorraad.items.push(it); this.save(); await this.log(`zette '${it.naam}' in de voorraad`); return it; },
-  async vrBewaarIndeling(ruimtes, cats){ this.d.voorraad.ruimtes = ruimtes; this.d.voorraad.categorieen = cats; this.save(); }
+  async vrBewaarIndeling(ruimtes, cats){ this.d.voorraad.ruimtes = ruimtes; this.d.voorraad.categorieen = cats; this.save(); },
+  async vrBarcodeBewaren(code, product_id, eenheid){ (this.d.voorraad.barcodes ||= {})[code] = { product_id, eenheid }; this.save(); },
+  async vrBestemmingAlsLeeg(pid, soort, categorie_id){ const b = this.d.voorraad.bestemming; if (!b[pid]) { b[pid] = { soort, categorie_id: categorie_id || null }; this.save(); } }
 };
 window.VR_SUPA = {
   async loadVoorraad(){
@@ -3012,9 +3015,11 @@ window.VR_SUPA = {
     const [r, c, i, t, w, b] = await Promise.all([q("voorraad_ruimtes").order("volgorde"), q("voorraad_categorieen").order("volgorde"),
       q("voorraad_items").is("op_op", null), q("tickets").neq("status", "verwijderd").order("datum", { ascending: false }).limit(30),
       q("winkel_codes"), this.g.from("producten").select("id, bestemming, voorraad_categorie_id, diepvries_categorie_id").eq("huishouden_id", this.h).not("bestemming", "is", null)]);
+    const bc = await q("product_barcodes"), barcodes = {};
+    if (!bc.error) for (const x of bc.data) barcodes[x.code] = { product_id: x.product_id, eenheid: x.eenheid };
     const codes = {}; for (const x of this.ok(w)) codes[x.winkel + "|" + x.artnr] = x.product_id;
     const bestemming = {}; for (const x of this.ok(b)) bestemming[x.id] = { soort: x.bestemming, categorie_id: x.bestemming === "diepvries" ? x.diepvries_categorie_id : x.voorraad_categorie_id };
-    return { ruimtes: this.ok(r), categorieen: this.ok(c), items: this.ok(i).map(x => ({ ...x, aantal: Number(x.aantal) })), tickets: this.ok(t), codes, bestemming };
+    return { ruimtes: this.ok(r), categorieen: this.ok(c), items: this.ok(i).map(x => ({ ...x, aantal: Number(x.aantal) })), tickets: this.ok(t), codes, bestemming, barcodes };
   },
   async vrTicketBewaren(t){
     if (!t.toch){ const { data } = await this.g.from("tickets").select("*").eq("huishouden_id", this.h).eq("sleutel", t.sleutel).neq("status", "verwijderd").limit(1); if (data && data[0]) return { dubbel: data[0] }; }
@@ -3030,9 +3035,16 @@ window.VR_SUPA = {
   async vrBewaarIndeling(ruimtes, cats){
     this.ok(await this.g.from("voorraad_ruimtes").upsert(ruimtes.map(r => ({ id: r.id, huishouden_id: this.h, code: r.code, naam: r.naam, soort: r.soort, planken: r.planken || 0, volgorde: r.volgorde, actief: r.actief }))));
     this.ok(await this.g.from("voorraad_categorieen").upsert(cats.map(c => ({ id: c.id, huishouden_id: this.h, naam: c.naam, ruimte_id: c.ruimte_id || null, plank: c.plank || null, houdbaar_dagen: c.houdbaar_dagen || null, volgorde: c.volgorde }))));
+  },
+  async vrBarcodeBewaren(code, product_id, eenheid){
+    this.ok(await this.g.from("product_barcodes").upsert({ huishouden_id: this.h, code, product_id, eenheid }, { onConflict: "huishouden_id,code" }));
+  },
+  async vrBestemmingAlsLeeg(pid, soort, categorie_id){
+    const w = { bestemming: soort, [soort === "diepvries" ? "diepvries_categorie_id" : "voorraad_categorie_id"]: categorie_id || null };
+    this.ok(await this.g.from("producten").update(w).eq("id", pid).eq("huishouden_id", this.h).is("bestemming", null));
   }
 };
-async function herlaadVoorraad(){ try { S.vr = await db.loadVoorraad(); } catch(e){ console.error(e); S.vr = { ruimtes: [], categorieen: [], items: [], tickets: [], codes: {}, bestemming: {} }; } }
+async function herlaadVoorraad(){ try { S.vr = await db.loadVoorraad(); } catch(e){ console.error(e); S.vr = { ruimtes: [], categorieen: [], items: [], tickets: [], codes: {}, bestemming: {}, barcodes: {} }; } }
 
 /* ---------- Afgeleid ---------- */
 const vrRuimtes = alle => S.vr.ruimtes.filter(r => alle || r.actief).sort((a, b) => a.volgorde - b.volgorde);
@@ -3094,6 +3106,7 @@ function vrKop(){
     </div>
     <div class="acties" style="margin-bottom:10px">
       <label class="knop" for="vr-bestand" tabindex="0" role="button">Ticket inlezen</label>
+      <button class="knop sec" data-vrtellen>Tellen met scanner${telBewaard(S.vrRuimte) ? ` <span class="vr-n">${telBewaard(S.vrRuimte)}</span>` : ""}</button>
       <input type="file" id="vr-bestand" accept="application/pdf,.pdf" hidden>
       ${open.map(t => `<button class="knop sec" data-vrticket="${t.id}">Binnengekomen: ${esc(t.winkel.naam)} ${dvDatum(t.datum)} <span class="vr-n">${t.lijnen.length}</span></button>`).join("")}
     </div>
@@ -3338,10 +3351,296 @@ document.addEventListener("click", e => {
   else if (t.dataset.vrmin) run(async () => { const i = S.vr.items.find(x => x.id === t.dataset.vrmin); const r = await db.vrGebruik(i.id, i.eenheid === "kg" ? Math.min(0.1, i.aantal) : 1); await herlaadVoorraad(); render(); toast(r.rest > 0 ? `Nog ${fmtNum(r.rest, 3)} ${i.naam}` : `${i.naam} is op`); });
   else if ("vrnieuw" in t.dataset) openVrNieuw();
   else if ("vrindeling" in t.dataset) openVrIndeling();
+  else if ("vrtellen" in t.dataset) openTellen(S.vrRuimte);
 });
 document.addEventListener("keydown", e => { if ((e.key === "Enter" || e.key === " ") && e.target.matches && e.target.matches("label[for='vr-bestand']")) { e.preventDefault(); $("#vr-bestand").click(); } });
 document.addEventListener("change", e => { if (e.target.id === "vr-bestand"){ const f = e.target.files && e.target.files[0]; e.target.value = ""; run(() => vrLeesBestand(f)); } });
 document.addEventListener("input", e => { if (e.target.id === "vr-zoek"){ S.vrZoek = e.target.value; const pos = e.target.selectionStart; viewRuimte(); const z = $("#vr-zoek"); z.focus(); z.setSelectionRange(pos, pos); } });
+</script>
+<style>
+.tel-cam{position:relative;background:#000;border-radius:var(--r);overflow:hidden;aspect-ratio:4/3;max-height:42vh;margin:6px 0}
+.tel-cam video{width:100%;height:100%;object-fit:cover;display:block}
+.tel-kader{position:absolute;left:12%;right:12%;top:34%;bottom:34%;border:2px solid rgba(255,255,255,.85);border-radius:10px;box-shadow:0 0 0 999px rgba(0,0,0,.25);pointer-events:none;transition:border-color .15s}
+.tel-cam.raak .tel-kader{border-color:#3ddc84}
+.tel-cam .tel-licht{position:absolute;right:8px;bottom:8px}
+.tel-cam .tel-uit{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;text-align:center;padding:16px;font-size:.9rem}
+.tel-status{min-height:1.4em;margin:4px 0 8px;font-weight:600}
+.tel-status.neg{color:var(--neg, #b3261e)}
+.tel-typ{display:flex;gap:6px;margin-bottom:10px}.tel-typ .in{flex:1}
+.tel-onbekend{border:1px solid var(--line);border-radius:var(--r);padding:10px 12px;margin-bottom:10px;background:var(--sunk)}
+.tel-onbekend h3{margin:0 0 6px}
+.tel-lijn{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line)}
+.tel-lijn b{display:block;overflow-wrap:anywhere}.tel-lijn small{color:var(--muted)}
+.tel-lijn.nieuw{animation:telFlits .8s}
+@keyframes telFlits{from{background:color-mix(in srgb, #3ddc84 35%, transparent)}to{background:transparent}}
+</style>
+<script>/* Kring – tellen met de gsm-camera (EAN/UPC-barcodes).
+   - Android/Chrome: ingebouwde BarcodeDetector; anders (iPhone, desktop) enkel de code intypen.
+   - De app leert per gezin barcode → product (gezin.product_barcodes). Onbekend: één keer kiezen of een
+     nieuw product maken (met een naamvoorstel van Open Food Facts).
+   - Een telling wordt eerst lokaal bijgehouden (ook na herladen) en pas bij "Bewaren" in de voorraad of
+     de diepvries gezet. Dezelfde barcode telt pas opnieuw als hij even uit beeld was. */
+"use strict";
+const TEL_SLEUTEL = "kring-telling-v1";
+const TEL_UIT_BEELD_MS = 900;
+let TEL = null;
+
+function telLaadAlle(){ try { return JSON.parse(localStorage.getItem(TEL_SLEUTEL) || "{}"); } catch { return {}; } }
+function telBewaarLokaal(){ if (!TEL) return; try { const a = telLaadAlle(); if (TEL.lijnen.length) a[TEL.plaats] = { lijnen: TEL.lijnen, plank: TEL.plank }; else delete a[TEL.plaats]; localStorage.setItem(TEL_SLEUTEL, JSON.stringify(a)); } catch {} }
+function telBewaard(plaats){ const t = telLaadAlle()[plaats]; return t && t.lijnen ? t.lijnen.reduce((s, l) => s + l.aantal, 0) : 0; }
+
+/* Barcode opschonen en controleren. Geeft { code, gewicht } of null. */
+function telCode(ruw){
+  let c = String(ruw || "").replace(/\D/g, "");
+  if (c.length === 12) c = "0" + c;                                   // UPC-A → EAN-13
+  if (![8, 13, 14].includes(c.length)) return null;
+  const cijfers = c.split("").map(Number), laatste = cijfers.pop();
+  const som = cijfers.reverse().reduce((s, d, i) => s + d * (i % 2 === 0 ? 3 : 1), 0);
+  if ((10 - som % 10) % 10 !== laatste) return null;
+  if (c.length === 13 && c[0] === "2") return { code: c.slice(0, 7), gewicht: true };   // winkel-/gewichtscode: prijs of gewicht zit in de rest
+  return { code: c, gewicht: false };
+}
+const telEenhDv = e => e === "pak" ? "pak" : "stuk";
+
+function telPlaatsNaam(plaats){ return plaats === "diepvries" ? "Diepvries" : ((vrRuimte(plaats) || {}).naam || "?"); }
+
+function openTellen(plaats){
+  const r = plaats === "diepvries" ? null : vrRuimte(plaats);
+  if (plaats !== "diepvries" && !r) return;
+  const oud = telLaadAlle()[plaats];
+  TEL = { plaats, plank: oud ? oud.plank || null : null, lijnen: oud ? oud.lijnen : [], wacht: null, laatst: {}, stream: null, bezig: false, detector: null, scan: false };
+  const kanScannen = "BarcodeDetector" in window && navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
+  openPaneel(`<div class="paneel-kop"><h2>Tellen · ${esc(telPlaatsNaam(plaats))}</h2><button class="ib" data-sluit aria-label="Sluiten">✕</button></div>
+    <p class="muted" style="margin-top:-6px">Scan elk product apart en haal het even uit beeld voor je het volgende scant. Pas bij <b>Bewaren</b> komt het in ${plaats === "diepvries" ? "de diepvries" : "de voorraad"}; tot dan blijft de telling op deze gsm bewaard.</p>
+    ${r && r.planken ? `<div class="veld"><label for="tel-plank">Plank (geldt voor wat je nu scant)</label><select class="in" id="tel-plank"><option value="">Volgens de categorie</option>${Array.from({ length: r.planken }, (_, k) => `<option value="${k + 1}" ${TEL.plank === k + 1 ? "selected" : ""}>Plank ${k + 1}${k === 0 ? " (boven)" : k + 1 === r.planken ? " (onder)" : ""}</option>`).join("")}</select></div>` : ""}
+    <div class="tel-cam" id="tel-cam"><video id="tel-video" playsinline muted></video><div class="tel-kader"></div>
+      <div class="tel-uit" id="tel-uit">${kanScannen ? `<button class="knop" data-telstart>Camera starten</button>` : "Scannen met de camera werkt in Chrome op Android. Typ hieronder de cijfers onder de barcode."}</div>
+      <button class="knop sec klein tel-licht" data-tellicht hidden>Lamp</button></div>
+    <p class="tel-status" id="tel-status" aria-live="polite"></p>
+    <form class="tel-typ" id="tel-typ"><input class="in" id="tel-code" inputmode="numeric" autocomplete="off" placeholder="of typ de barcode (8 of 13 cijfers)" aria-label="Barcode"><button class="knop sec">Tel</button></form>
+    <div id="tel-onbekend"></div>
+    <div id="tel-lijst"></div>
+    <div class="voet"><button class="knop sec" data-telleeg>Leegmaken</button><button class="knop" data-telbewaar id="tel-bewaar">Bewaren</button></div>`);
+  const p = $("#paneel");
+  p.onclick = telKlik;
+  p.onchange = e => { if (e.target.id === "tel-plank"){ TEL.plank = Number(e.target.value) || null; telBewaarLokaal(); } };
+  p.onsubmit = e => { e.preventDefault();
+    if (e.target.id === "tel-typ"){ const v = $("#tel-code").value; $("#tel-code").value = ""; telVerwerk(v, true); }
+    if (e.target.id === "tel-koppel") telKoppel(); };
+  telTekenLijst();
+  if (oud && oud.lijnen.length) telStatus(`Telling hervat: ${telBewaard(plaats)} geteld`);
+  if (kanScannen) telStartCamera();
+}
+
+function telStatus(t, neg){ const el = $("#tel-status"); if (el){ el.textContent = t; el.classList.toggle("neg", !!neg); } }
+
+async function telStartCamera(){
+  if (!TEL || TEL.stream) return;
+  try {
+    const formaten = await BarcodeDetector.getSupportedFormats();
+    const wil = ["ean_13", "ean_8", "upc_a", "upc_e"].filter(f => formaten.includes(f));
+    if (!wil.length) throw new Error("deze gsm kan geen EAN-codes lezen");
+    TEL.detector = new BarcodeDetector({ formats: wil });
+    TEL.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    const v = $("#tel-video"); if (!v) return telStop();
+    v.srcObject = TEL.stream; await v.play();
+    $("#tel-uit").hidden = true;
+    const track = TEL.stream.getVideoTracks()[0], cap = track.getCapabilities ? track.getCapabilities() : {};
+    if (cap.torch) $("[data-tellicht]").hidden = false;
+    TEL.scan = true; telLus();
+  } catch (e) {
+    console.error(e); telStop();
+    const u = $("#tel-uit"); if (u){ u.hidden = false; u.innerHTML = `<div>${e && e.name === "NotAllowedError" ? "Geen toegang tot de camera. Sta de camera toe voor Kring (slotje naast het adres) en probeer opnieuw." : "Camera niet beschikbaar: " + esc(e.message || e)}<br><br><button class="knop" data-telstart>Opnieuw</button></div>`; }
+  }
+}
+function telStop(){
+  if (!TEL) return;
+  TEL.scan = false;
+  if (TEL.stream) TEL.stream.getTracks().forEach(t => t.stop());
+  TEL.stream = null;
+}
+async function telLus(){
+  const v = $("#tel-video");
+  if (!TEL || !TEL.scan || !v || !document.body.contains(v) || $("#sheet").hidden) return telStop();   // paneel dicht → camera uit
+  if (v.readyState >= 2){
+    try {
+      const nu = Date.now(), gevonden = await TEL.detector.detect(v);
+      for (const b of gevonden){
+        const k = b.rawValue, vorige = TEL.laatst[k];
+        TEL.laatst[k] = nu;                                               // ook tijdens het koppelen: wat in beeld blijft, telt niet opnieuw
+        if (TEL.wacht || (vorige && nu - vorige < TEL_UIT_BEELD_MS)) continue;
+        telVerwerk(k, false); break;
+      }
+    } catch (e) { console.error(e); }
+  }
+  setTimeout(telLus, 120);
+}
+
+function telSignaal(goed){
+  try { navigator.vibrate && navigator.vibrate(goed ? 40 : [60, 60, 60]); } catch {}
+  try { const ac = telSignaal.ac ||= new (window.AudioContext || window.webkitAudioContext)(), o = ac.createOscillator(), g = ac.createGain();
+    o.frequency.value = goed ? 1320 : 330; g.gain.value = 0.08; o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime + (goed ? 0.07 : 0.2)); } catch {}
+  const c = $("#tel-cam"); if (c && goed){ c.classList.add("raak"); setTimeout(() => c.classList.remove("raak"), 250); }
+}
+
+function telVerwerk(ruw, getypt){
+  if (!TEL || TEL.wacht) return;
+  const c = telCode(ruw);
+  if (!c){ telSignaal(false); return telStatus(getypt ? "Geen geldige barcode (controlecijfer klopt niet)." : "Niet goed gelezen, scan opnieuw.", true); }
+  const k = S.vr.barcodes && S.vr.barcodes[c.code];
+  const pr = k && product(k.product_id);
+  if (pr) { telTel(pr, k.eenheid || "stuk", c.code); return; }
+  telSignaal(true); telOnbekend(c);
+}
+
+function telTel(pr, eenheid, code, n = 1){
+  const plank = TEL.plaats === "diepvries" ? null : TEL.plank;
+  const sl = `${pr.id}|${eenheid}|${plank || ""}`;
+  let l = TEL.lijnen.find(x => x.sl === sl);
+  if (!l){ l = { sl, product_id: pr.id, naam: pr.naam, eenheid, plank, aantal: 0, code }; TEL.lijnen.unshift(l); }
+  else { TEL.lijnen.splice(TEL.lijnen.indexOf(l), 1); TEL.lijnen.unshift(l); }
+  l.aantal += n;
+  telSignaal(true); telBewaarLokaal(); telTekenLijst(sl);
+  telStatus(`+${n} ${pr.naam} (${l.aantal})`);
+}
+
+function telTekenLijst(nieuw){
+  const el = $("#tel-lijst"); if (!el) return;
+  const tot = TEL.lijnen.reduce((s, l) => s + l.aantal, 0);
+  el.innerHTML = TEL.lijnen.length ? `<h3>Geteld <span class="muted" style="font-weight:400">· ${tot}</span></h3>` + TEL.lijnen.map((l, i) => `<div class="tel-lijn ${l.sl === nieuw ? "nieuw" : ""}">
+      <div><b>${esc(l.naam)}</b><small>${fmtNum(l.aantal, 3)} ${vrEenh(l.aantal, l.eenheid)}${l.plank ? " · plank " + l.plank : ""}</small></div>
+      <div class="stepper"><button class="ib" data-telmin="${i}" aria-label="Eén minder ${esc(l.naam)}">−</button><output>${fmtNum(l.aantal, 3)}</output><button class="ib" data-telplus="${i}" aria-label="Eén meer ${esc(l.naam)}">+</button></div></div>`).join("")
+    : `<p class="muted">Nog niets geteld.</p>`;
+  const b = $("#tel-bewaar"); if (b){ b.textContent = tot ? `Bewaren (${tot})` : "Bewaren"; b.disabled = !tot; }
+}
+
+/* ---------- Onbekende barcode koppelen ---------- */
+function telOnbekend(c){
+  TEL.wacht = c;
+  const el = $("#tel-onbekend");
+  el.innerHTML = `<form class="tel-onbekend" id="tel-koppel"><h3>Nieuwe barcode ${esc(c.code)}${c.gewicht ? " <small class=\"muted\">(gewichtsartikel)</small>" : ""}</h3>
+    <div class="veld"><label for="tel-naam">Welk product?</label><input class="in" id="tel-naam" list="tel-producten" autocomplete="off" placeholder="zoek in jullie producten of typ een nieuwe naam">
+      <datalist id="tel-producten">${S.producten.slice().sort((a, b) => a.naam.localeCompare(b.naam, "nl")).map(p => `<option value="${esc(p.naam)}">`).join("")}</datalist>
+      <small class="muted" id="tel-off"></small></div>
+    <div class="rij"><div class="veld"><label for="tel-eenh">Telt als</label><select class="in" id="tel-eenh">${VR_EENH.filter(([k]) => k !== "kg").map(([k, l]) => `<option value="${k}">${l}</option>`).join("")}</select></div></div>
+    <p class="neg-tekst" id="tel-kfout" hidden></p>
+    <div class="acties" style="margin:6px 0 0"><button class="knop">Koppelen en tellen</button><button class="knop sec" type="button" data-teloverslaan>Overslaan</button></div></form>`;
+  el.scrollIntoView({ block: "nearest" });
+  telStatus("Onbekende barcode: kies het product (eenmalig).");
+  telOpenFoodFacts(c);
+}
+
+async function telOpenFoodFacts(c){
+  if (c.gewicht) return;
+  const info = $("#tel-off"); if (info) info.textContent = "Naam opzoeken bij Open Food Facts…";
+  try {
+    const ac = new AbortController(), t = setTimeout(() => ac.abort(), 5000);
+    const r = await fetch(`https://world.openfoodfacts.org/api/v2/product/${c.code}.json?fields=product_name_nl,product_name_fr,product_name,brands,quantity`, { signal: ac.signal });
+    clearTimeout(t);
+    const j = await r.json(), p = j && j.product;
+    const naam = p && [String(p.brands || "").split(",")[0].trim(), (p.product_name_nl || p.product_name || p.product_name_fr || "").trim(), (p.quantity || "").trim()].filter(Boolean).join(" ");
+    if (!TEL || !TEL.wacht || TEL.wacht.code !== c.code) return;
+    const inp = $("#tel-naam"), i2 = $("#tel-off");
+    if (naam && (p.product_name_nl || p.product_name || p.product_name_fr)){
+      const bestaand = telZoekProduct(naam);
+      if (inp && !inp.value) inp.value = bestaand ? bestaand.naam : naam;
+      if (i2) i2.textContent = bestaand ? "Gevonden in jullie producten (via Open Food Facts). Klopt het niet, kies een ander." : "Voorstel van Open Food Facts. Pas aan of kies een bestaand product.";
+    } else if (i2) i2.textContent = "Niet gevonden bij Open Food Facts.";
+  } catch { const i2 = $("#tel-off"); if (i2) i2.textContent = ""; }
+}
+
+/* Bestaand product bij een (voorgestelde) naam: exact, of alle woorden van de kortste naam komen voor */
+function telZoekProduct(naam){
+  const n = norm(naam); if (!n) return null;
+  const exact = S.producten.find(p => norm(p.naam) === n); if (exact) return exact;
+  const w = s => norm(s).replace(/[^a-z0-9à-ÿ ]/g, " ").split(" ").filter(x => x.length > 2);
+  const a = new Set(w(naam));
+  return S.producten.find(p => { const b = w(p.naam); return b.length >= 2 && b.every(x => a.has(x)); }) || null;
+}
+
+function telKoppel(){
+  const c = TEL.wacht; if (!c) return;
+  const naam = $("#tel-naam").value.trim(), eenheid = $("#tel-eenh").value;
+  const fout = m => { const f = $("#tel-kfout"); f.textContent = m; f.hidden = false; };
+  if (!naam) return fout("Kies of typ een product.");
+  run(async () => {
+    let pr = S.producten.find(p => norm(p.naam) === norm(naam));
+    if (!pr){
+      const id = await db.nieuwProduct({ naam, afdeling: K.afdelingVoor(naam), prijs: null, prijs_per: "stuk" });
+      await herlaadProducten(); pr = product(id);
+      if (!pr) throw new Error("nieuw product niet gevonden");
+    }
+    await db.vrBarcodeBewaren(c.code, pr.id, eenheid);
+    (S.vr.barcodes ||= {})[c.code] = { product_id: pr.id, eenheid };
+    TEL.wacht = null; $("#tel-onbekend").innerHTML = "";
+    telTel(pr, eenheid, c.code);
+  });
+}
+
+function telKlik(e){
+  const b = e.target.closest("button"); if (!b || !TEL) return;
+  if ("telstart" in b.dataset) telStartCamera();
+  else if ("tellicht" in b.dataset && TEL.stream){
+    const tr = TEL.stream.getVideoTracks()[0]; TEL.licht = !TEL.licht;
+    tr.applyConstraints({ advanced: [{ torch: TEL.licht }] }).catch(() => {});
+  }
+  else if ("teloverslaan" in b.dataset){ TEL.wacht = null; $("#tel-onbekend").innerHTML = ""; telStatus("Overgeslagen."); }
+  else if (b.dataset.telplus || b.dataset.telmin){
+    const i = Number(b.dataset.telplus || b.dataset.telmin), l = TEL.lijnen[i]; if (!l) return;
+    l.aantal += b.dataset.telplus ? 1 : -1;
+    if (l.aantal <= 0) TEL.lijnen.splice(i, 1);
+    telBewaarLokaal(); telTekenLijst();
+  }
+  else if ("telleeg" in b.dataset){
+    if (!TEL.lijnen.length) return;
+    if (!b.dataset.zeker){ b.dataset.zeker = "1"; b.textContent = "Zeker? Tik nog eens"; setTimeout(() => { if (b.isConnected){ delete b.dataset.zeker; b.textContent = "Leegmaken"; } }, 3000); return; }
+    TEL.lijnen = []; telBewaarLokaal(); telTekenLijst(); telStatus("Telling leeggemaakt."); delete b.dataset.zeker; b.textContent = "Leegmaken";
+  }
+  else if ("telbewaar" in b.dataset) run(telBewaren);
+}
+
+/* Categorie voor een geteld product in deze ruimte */
+function telCategorie(pr, r, plank){
+  const inRuimte = id => { const c = vrCat(id); return c && c.ruimte_id === r.id ? c : null; };
+  const g = S.vr.bestemming[pr.id];
+  if (g && g.soort === "voorraad" && inRuimte(g.categorie_id)) return inRuimte(g.categorie_id);
+  const raad = vrRaad(pr.naam, pr.afdeling || "");
+  if (raad.soort === "voorraad" && inRuimte(raad.categorie_id)) return inRuimte(raad.categorie_id);
+  const cats = S.vr.categorieen.filter(c => c.ruimte_id === r.id).sort((a, b) => a.volgorde - b.volgorde);
+  return (plank && cats.find(c => c.plank === plank)) || cats[0] || null;
+}
+
+async function telBewaren(){
+  const lijnen = TEL.lijnen.slice(), vd = iso(new Date());
+  if (!lijnen.length) return;
+  let n = 0;
+  if (TEL.plaats === "diepvries"){
+    for (const l of lijnen){
+      const pr = product(l.product_id) || { id: l.product_id, naam: l.naam };
+      const g = S.vr.bestemming[pr.id];
+      const cid = g && g.soort === "diepvries" && g.categorie_id ? g.categorie_id : (S.dv.categorieen.find(c => c.naam === dvRaadCategorie(pr.naam, "product")) || {}).id || null;
+      await db.dvInvriezen({ soort: "product", product_id: pr.id, naam: pr.naam, categorie_id: cid, aantal: l.aantal, eenheid: telEenhDv(l.eenheid), ingevroren_op: vd });
+      if (!g) await db.vrBestemmingAlsLeeg(pr.id, "diepvries", cid);
+      TEL.lijnen.splice(TEL.lijnen.indexOf(l), 1); telBewaarLokaal(); n += l.aantal;
+    }
+  } else {
+    const r = vrRuimte(TEL.plaats);
+    for (const l of lijnen){
+      const pr = product(l.product_id) || { id: l.product_id, naam: l.naam };
+      const c = telCategorie(pr, r, l.plank), plank = l.plank || (c && c.plank) || null;
+      const zelfde = S.vr.items.find(i => !i.op_op && String(i.product_id) === String(pr.id) && i.ruimte_id === r.id && (i.plank || null) === plank && i.eenheid === l.eenheid);
+      if (zelfde){ await db.vrBewaarItem(zelfde.id, { aantal: Math.round((Number(zelfde.aantal) + l.aantal) * 1000) / 1000 }); zelfde.aantal = Number(zelfde.aantal) + l.aantal; }
+      else await db.vrToevoegen({ product_id: pr.id, naam: pr.naam, categorie_id: c ? c.id : null, ruimte_id: r.id, plank, aantal: l.aantal, eenheid: l.eenheid,
+        eet_voor: c && c.houdbaar_dagen ? vrDagen(vd, c.houdbaar_dagen) : null });
+      if (!S.vr.bestemming[pr.id]) await db.vrBestemmingAlsLeeg(pr.id, "voorraad", c ? c.id : null);
+      TEL.lijnen.splice(TEL.lijnen.indexOf(l), 1); telBewaarLokaal(); n += l.aantal;
+    }
+  }
+  const waar = telPlaatsNaam(TEL.plaats);
+  telStop(); TEL = null;
+  await Promise.all([herlaadVoorraad(), herlaadDiepvries()]);
+  sluitPaneel(); render(); toast(`${fmtNum(n, 3)} geteld in ${waar}`);
+}
 </script>
 <style>
 .vs-dagen{display:flex;flex-direction:column}

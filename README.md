@@ -19,6 +19,7 @@ Vandaag · Agenda · Eten (weekmenu, gerechten, boodschappen/bestellijst, diepvr
 | `supabase/migrations/20261113_gezin_afval.sql` | Afvalkalender via Recycle! (Fost Plus): adres, ophalingen, nachtelijke sync (pg_cron) |
 | `supabase/migrations/20261113_gezin_afval_toewijzing.sql` | Afval: vaste verantwoordelijke per soort, wie per ophaling, afvinken, vervangdatum, view `afval_agenda` |
 | `supabase/migrations/20261113_gezin_taken_zichtbaar.sql` | Taken: "Zichtbaar voor" (RLS), geen log en geen ICS-export van afgeschermde taken |
+| `supabase/migrations/20261122_gezin_barcodes.sql` | Barcodes (EAN/UPC) → product per gezin, voor **Tellen met scanner** (Voorraad en Diepvries; camera via BarcodeDetector in Chrome op Android) |
 | `supabase/functions/recept-import` | Recept ophalen van een receptensite (JWT verplicht) |
 | `supabase/functions/ics-ophalen` | Externe ICS-agenda ophalen (JWT verplicht) |
 | `supabase/migrations/20261114_gezin_taak_duim.sql` | Duimpje omhoog/omlaag per taak (voorkomen), enkel voor ouders (beheerder, lid); tieners en kinderen zien niets |
