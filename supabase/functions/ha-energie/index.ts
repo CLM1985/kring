@@ -8,7 +8,7 @@
 //   De functie controleert zelf: elke actie behalve "tick" gaat via gezin.energie_toegang() met het JWT van de gebruiker
 //   (zonder geldig JWT: geen toegang). "tick" komt van pg_cron (gezin.laadvenster_cron) met een geheim token.
 //
-// Body: { actie: "status" }                       → live, prijzen, zonneverwachting, laadpunt, wagens, tijdsvenster
+// Body: { actie: "status" }                       → live, prijzen, zonneverwachting, laadpunt, wagens (met laadplan), tijdsvenster
 //       { actie: "historiek", dag?: "gisteren" }  → net, zon en wagen per kwartier (HA-statistieken); gisteren ook de prijzen
 //       { actie: "laadmodus", modus: "smart"|"now"|"off" }  → buiten een actief tijdsvenster enkel onthouden
 //       { actie: "venster", actief, van: "22:00", tot: "07:00" } → tijdsvenster instellen en meteen toepassen
@@ -18,8 +18,16 @@
 //       { actie: "toch", uren: n|null|0, modus }   → buiten het venster toch laden (n uur, null = tot het venster begint, 0 = stoppen)
 //       { actie: "dagkost", dagen?: 31 }           → kost per dag (afname − injectie + vaste kost) en per maand, met de maandpiek;
 //                                                     voor elk lid van het gekoppelde gezin
-//       { actie: "dagprijzen", token }             → pg_cron (elk uur): ontbrekende dagprijzen ophalen bij Frank (publiek)
-//                                                     en de kost per dag bijwerken (gezin.energie_dagkost)
+//       { actie: "dagprijzen", token }             → pg_cron (elk uur): ontbrekende dagprijzen ophalen bij Frank (publiek),
+//                                                     de kost per dag bijwerken (gezin.energie_dagkost), net, zon en wagen
+//                                                     per kwartier bewaren (gezin.energie_kwartier, gisteren en vandaag) en
+//                                                     de zonneverwachting en kwartierprijzen van evcc bewaren (gezin.zon_forecast, gezin.prijs_forecast)
+//       { actie: "kwartier_backfill", token, per: "uur"|"kwartier", van?, tot? }
+//                                                  → eenmalig aanvullen van gezin.energie_kwartier (max. 31 dagen per oproep):
+//                                                     "uur" voor oudere dagen (langetermijnstatistieken), "kwartier" voor de
+//                                                     laatste KW_DAGEN dagen (5-minutenstatistieken)
+//       { actie: "regels", aan: true|false }       → laadregel van de aangesloten wagen volgen (true) of pauzeren voor deze sessie (false);
+//                                                     manuele acties (laadmodus, toch, altijd) pauzeren de regel ook. Sturing zelf: laadpaal-bewaking
 //       { actie: "tick", token }                   → pg_cron: vensters toepassen bij een overgang, en buiten het venster
 //                                                     om de 5 min nakijken of evcc nog op Uit staat (bewaking)
 
@@ -91,10 +99,11 @@ async function evccStatus() {
     },
     voertuigen: Object.values(s.vehicles || {}).map((v) => (v as { title?: string }).title).filter(Boolean) as string[],
     // [start (s), eind (s), €/kWh] per kwartier
-    prijzen: (f.grid || []).map((p: number[]) => [p[0], p[1], rond(p[2], 4)]),
+    prijzen: (f.grid || []).map((p: number[] | { start: string; end: string; value: number }) => Array.isArray(p) ? [p[0], p[1], rond(p[2], 4)]
+      : [Math.round(Date.parse(p.start) / 1000), Math.round(Date.parse(p.end) / 1000), rond(p.value, 4)]),
     injectie: (f.feedin || []).map((p: number[]) => [p[0], p[1], rond(p[2], 4)]),
     // [tijd (s), W] per kwartier
-    zon: (f.solar?.timeseries || []).map((p: number[]) => [p[0], rond(p[1])]),
+    zon: (f.solar?.timeseries || []).map((p: number[] | { ts: string; val: number }) => Array.isArray(p) ? [p[0], rond(p[1])] : [Math.round(Date.parse(p.ts) / 1000), rond(p.val)]),
     zonKwh: { vandaag: rond((f.solar?.today?.energy || 0) / 1000, 1), morgen: rond((f.solar?.tomorrow?.energy || 0) / 1000, 1) },
   };
 }
@@ -167,7 +176,7 @@ function binnenVenster(van: string, tot: string, op = new Date()) {
 }
 // Wagens: de voertuigen uit evcc, aangevuld met gezin.wagens (naam, HA-sensoren). Batterij en bereik komen uit evcc
 // als de wagen aan de laadpaal hangt, anders uit de HA-sensoren (bv. de Volvo-integratie). De foto haalt de app zelf op.
-type Wagen = { evcc: string; soc: number | null; bereik: number | null; aanPaal: boolean; laadt: boolean; vermogen: number | null; resterendS: number | null; limiet: number | null };
+type Wagen = { evcc: string; soc: number | null; bereik: number | null; aanPaal: boolean; laadt: boolean; vermogen: number | null; resterendS: number | null; limiet: number | null; plan?: unknown };
 async function haWaarde(id: string | null) {
   if (!id || !/^sensor\.[a-z0-9_]+$/.test(id)) return null;
   try {
@@ -178,15 +187,18 @@ async function haWaarde(id: string | null) {
   } catch { return null; }
 }
 async function wagensLees(auth: string, st: Awaited<ReturnType<typeof evccStatus>>): Promise<Wagen[]> {
-  const r = await fetch(`${SB_URL}/rest/v1/wagens?select=evcc_titel,soc_sensor,bereik_sensor,volgorde&order=volgorde`, { headers: { apikey: SB_ANON, Authorization: auth, "Accept-Profile": "gezin" } });
-  const cfg = (r.ok ? await r.json() : []) as { evcc_titel: string; soc_sensor: string | null; bereik_sensor: string | null }[];
+  const r = await fetch(`${SB_URL}/rest/v1/wagens?select=id,evcc_titel,soc_sensor,bereik_sensor,volgorde,regel_modus&order=volgorde`, { headers: { apikey: SB_ANON, Authorization: auth, "Accept-Profile": "gezin" } });
+  const cfg = (r.ok ? await r.json() : []) as { id: string; evcc_titel: string; soc_sensor: string | null; bereik_sensor: string | null; regel_modus: string | null }[];
   const namen = [...cfg.map((c) => c.evcc_titel), ...st.voertuigen.filter((t) => !cfg.some((c) => c.evcc_titel === t))];
   const lp = st.laadpunt;
   return Promise.all(namen.map(async (evcc) => {
     const c = cfg.find((x) => x.evcc_titel === evcc);
     const aanPaal = lp.verbonden && lp.wagen === evcc, laadt = aanPaal && lp.laadt;
     const [soc, bereik] = aanPaal && lp.soc ? [lp.soc, lp.bereik] : await Promise.all([haWaarde(c?.soc_sensor || null), haWaarde(c?.bereik_sensor || null)]);
-    return { evcc, soc: rond(soc), bereik: rond(bereik), aanPaal, laadt, vermogen: laadt ? lp.vermogen : null, resterendS: laadt ? lp.resterendS : null, limiet: aanPaal ? lp.limiet : null };
+    // Verwachting volgens de laadregel (gezin.laadplan): verwacht laadniveau, wanneer, zon/net, kost, overrule
+    const plan = c?.regel_modus ? await rpc(auth, "laadplan_kring", { p_wagen: c.id, p_soc: rond(soc) }).catch(() => null) : null;
+    if (plan && typeof plan === "object") delete (plan as Record<string, unknown>).kwartieren;
+    return { evcc, soc: rond(soc), bereik: rond(bereik), aanPaal, laadt, vermogen: laadt ? lp.vermogen : null, resterendS: laadt ? lp.resterendS : null, limiet: aanPaal ? lp.limiet : null, plan };
   }));
 }
 // Dagprijzen: gemiddelde all-in prijs per dag (gezin.energie_dagprijs). Bron = publieke marktprijzen van Frank (BE),
@@ -411,11 +423,105 @@ async function dagkostBij(huishouden: string, max = 40) {
   return { te_doen: te.length, bewaard: rijen.length, zonder_prijzen: zonderPrijzen, meters: ids };
 }
 // Voor pg_cron: elk gekoppeld gezin (één Home Assistant per project, dus dezelfde meters)
-async function dagkostAlle(max = 40) {
+async function koppelingen() {
   const r = await fetch(`${SB_URL}/rest/v1/energie_koppeling?select=huishouden_id&actief=is.true`, { headers: { apikey: SB_SERVICE, Authorization: `Bearer ${SB_SERVICE}`, "Accept-Profile": "gezin" } });
   if (!r.ok) throw new Error(`koppeling lezen: ${r.status}`);
+  return ((await r.json()) as { huishouden_id: string }[]).map((k) => k.huishouden_id);
+}
+async function dagkostAlle(max = 40) {
   const uit = [];
-  for (const k of (await r.json()) as { huishouden_id: string }[]) uit.push(await dagkostBij(k.huishouden_id, max));
+  for (const k of await koppelingen()) uit.push(await dagkostBij(k, max));
+  return uit;
+}
+
+// ---------- Net, zon en laden per kwartier (gezin.energie_kwartier) ----------
+// Elk uur (actie dagprijzen): gisteren en vandaag als kwartier uit de 5-minutenstatistieken van HA. Die bewaart HA maar
+// ±10 dagen; deze kopie maakt ze blijvend (voor simulaties, de echte kwartierpiek en controle van de factuur).
+// Eenmalig (actie kwartier_backfill): oudere dagen per uur uit de langetermijnstatistieken.
+// Afname en injectie: toename van de netmeters, zoals bij de dagkost. Zon en wagen: gemiddeld vermogen (W) × tijd.
+// markt_eur_kwh: marktprijs van Frank (zonder opslag); all-in = FACTOR × markt + VAST + TOESLAG.
+// Een periode wordt enkel bewaard als ze voorbij is en de netmeter ze volledig dekt.
+type MeanRij = { start: number; mean?: number | null };
+function energieUitVermogen(rijen: MeanRij[] | undefined, P: number, emmer: number) {
+  const uit = new Map<number, number>();
+  for (const r of rijen || []) {
+    if (typeof r.mean !== "number" || !isFinite(r.mean)) continue;
+    const k = Math.floor(Math.round(r.start / 1000) / emmer) * emmer;
+    uit.set(k, (uit.get(k) || 0) + Math.max(0, r.mean) * P / 3600 / 1000);
+  }
+  return uit;
+}
+async function kwartierBij(huishouden: string, van: string, tot: string, per: "kwartier" | "uur") {
+  const nu = Math.floor(Date.now() / 1000);
+  const P = per === "kwartier" ? 300 : 3600, emmer = per === "kwartier" ? 900 : 3600;
+  const t0 = dagStart(van), t1 = Math.min(dagStart(dagPlus(tot, 1)), Math.floor(nu / emmer) * emmer);
+  if (t1 <= t0) return { per, van, tot, bewaard: 0 };
+  const ha = await haSessie(async (vraag) => {
+    const ids = await netMeters(vraag);
+    const basis = { start_time: new Date(t0 * 1000).toISOString(), end_time: new Date(t1 * 1000).toISOString(), period: per === "kwartier" ? "5minute" : "hour" };
+    const [teller, vermogen] = await Promise.all([
+      vraag({ type: "recorder/statistics_during_period", ...basis, types: ["change"], units: { energy: "kWh" }, statistic_ids: [...ids.af, ...ids.inj] }) as Promise<Record<string, StatRij[]>>,
+      vraag({ type: "recorder/statistics_during_period", ...basis, types: ["mean"], units: { power: "W" }, statistic_ids: [ZON, WAGEN] }) as Promise<Record<string, MeanRij[]>>,
+    ]);
+    return { ids, teller, vermogen };
+  }, 60000);
+  const af = reeks(ha.teller, ha.ids.af, P), inj = reeks(ha.teller, ha.ids.inj, P);
+  const zon = energieUitVermogen(ha.vermogen[ZON], P, emmer), wagen = energieUitVermogen(ha.vermogen[WAGEN], P, emmer);
+  const dagen: string[] = [];
+  for (let d = van; d <= tot; d = dagPlus(d, 1)) dagen.push(d);
+  const markt = new Map<number, number>();
+  for (let i = 0; i < dagen.length; i += 5) {
+    await Promise.all(dagen.slice(i, i + 5).map(async (d) => { const m = await frankMarkt(d).catch(() => null); if (m) for (const [q, v] of m) markt.set(q, v); }));
+  }
+  const rijen = [], nuIso = new Date().toISOString();
+  for (let t = t0; t < t1; t += emmer) {
+    let a = 0, i = 0, dek = 0, gs = false, ms = 0, mn = 0;
+    for (let q = t; q < t + emmer; q += 900) {
+      const x = af.get(q), y = inj.get(q);
+      if (x) { a += x.kwh; gs = gs || x.geschat; }
+      if (y) { i += y.kwh; gs = gs || y.geschat; }
+      dek += Math.min(900, Math.max(x ? x.dek : 0, y ? y.dek : 0));
+      const m = markt.get(q); if (m != null) { ms += m; mn++; }
+    }
+    if (dek < emmer * 0.99) continue;
+    rijen.push({ huishouden_id: huishouden, ts: new Date(t * 1000).toISOString(), per, afname_kwh: rond(a, 4), injectie_kwh: rond(i, 4),
+      zon_kwh: zon.has(t) ? rond(zon.get(t)!, 4) : null, wagen_kwh: wagen.has(t) ? rond(wagen.get(t)!, 4) : null,
+      markt_eur_kwh: mn ? rond(ms / mn, 5) : null, geschat: gs, bijgewerkt: nuIso });
+  }
+  const h = { apikey: SB_SERVICE, Authorization: `Bearer ${SB_SERVICE}`, "Accept-Profile": "gezin", "Content-Profile": "gezin", "Content-Type": "application/json", Prefer: "resolution=merge-duplicates" };
+  for (let k = 0; k < rijen.length; k += 500) {
+    const w = await fetch(`${SB_URL}/rest/v1/energie_kwartier`, { method: "POST", headers: h, body: JSON.stringify(rijen.slice(k, k + 500)) });
+    if (!w.ok) throw new Error(`kwartier bewaren: ${w.status} ${await w.text()}`);
+  }
+  return { per, van, tot, bewaard: rijen.length, meters: ha.ids };
+}
+// Zonneverwachting per kwartier uit evcc (Forecast.Solar: 4,48 kWp, azimut −20°, helling 45°, omvormer 3 kW) → gezin.zon_forecast.
+// Basis voor de laadregels (gezin.laadplan, gezin.zon_advies). Elk uur, met de dagprijzen.
+async function zonForecastAlle() {
+  const st = await evccStatus();
+  // evcc levert per kwartier of per uur; een punt geldt tot het volgende (max. 1 uur) → altijd per kwartier bewaren
+  const pt = st.zon.filter((p) => p[1] != null && isFinite(p[0])).sort((a, b) => a[0] - b[0]) as [number, number][];
+  const rijen: [number, number][] = [];
+  for (let i = 0; i < pt.length; i++) {
+    const t0 = Math.floor(pt[i][0] / 900) * 900, t1 = Math.min(i + 1 < pt.length ? pt[i + 1][0] : t0 + 900, t0 + 3600);
+    for (let t = t0; t < t1; t += 900) if (!rijen.length || rijen[rijen.length - 1][0] < t) rijen.push([t, pt[i][1]]);
+  }
+  // Kwartierprijzen vooruit (all-in afname uit evcc) → gezin.prijs_forecast, voor het laadplan per wagen (gezin.laadplan)
+  const prijzen: [number, number][] = [];
+  for (const [a, b, p] of st.prijzen as [number, number, number | null][]) {
+    if (p == null || !isFinite(a) || !isFinite(b)) continue;
+    for (let t = Math.floor(a / 900) * 900; t < b; t += 900) prijzen.push([t, p]);
+  }
+  let bewaard = 0, prijsBewaard = 0;
+  for (const k of await koppelingen()) {
+    if (rijen.length) bewaard += await rpc(`Bearer ${SB_SERVICE}`, "zon_forecast_bewaar", { p_huishouden: k, p_rijen: rijen }, SB_SERVICE);
+    if (prijzen.length) prijsBewaard += await rpc(`Bearer ${SB_SERVICE}`, "prijs_forecast_bewaar", { p_huishouden: k, p_rijen: prijzen }, SB_SERVICE);
+  }
+  return { bewaard, prijzen: prijsBewaard, van: rijen.length ? new Date(rijen[0][0] * 1000).toISOString() : null, tot: rijen.length ? new Date(rijen[rijen.length - 1][0] * 1000).toISOString() : null };
+}
+async function kwartierAlle() {
+  const vandaag = isoDag(new Date()), uit = [];
+  for (const k of await koppelingen()) uit.push(await kwartierBij(k, dagPlus(vandaag, -1), vandaag, "kwartier"));
   return uit;
 }
 
@@ -482,6 +588,8 @@ async function vensterToepassen(token: string) {
   const svc = `Bearer ${SB_SERVICE}`;
   const rijen = await rpc(svc, "laadvenster_te_doen", { p_token: token }, SB_SERVICE) as { huishouden_id: string; modus: string; binnen: boolean; controle: boolean }[];
   for (const v of rijen || []) {
+    // Hangt er een herkende wagen met een actieve laadregel (zonder overrule), dan stuurt laadpaal-bewaking: venster met rust laten
+    if (await rpc(svc, "regel_stuurt", { p_huishouden: v.huishouden_id }, SB_SERVICE).catch(() => false)) continue;
     if (v.controle) {
       // Bewaking: buiten het venster moet evcc op Uit staan (bewust laden gaat via "Toch laden" in Kring)
       const nu = await haDienst("kring_evcc_state");
@@ -511,9 +619,28 @@ Deno.serve(async (req) => {
       const t = await tickToken();
       if (!t || body.token !== t) return antwoord({ fout: "Geen toegang" }, 403);
       const max = Math.min(60, Number(body.max) || 40), prijzen = await dagprijzenBij(max);
-      // Daarna de kost per dag; een fout daar (bv. HA onbereikbaar) mag de dagprijzen niet tegenhouden
+      // Daarna de kost per dag, de kwartieren en de verwachtingen; een fout daar (bv. HA onbereikbaar) mag de dagprijzen niet tegenhouden
       const dagkost = await dagkostAlle(max).catch((e) => ({ fout: e instanceof Error ? e.message : String(e) }));
-      return antwoord({ ...prijzen, dagkost });
+      const kwartier = await kwartierAlle().catch((e) => ({ fout: e instanceof Error ? e.message : String(e) }));
+      const forecast = await zonForecastAlle().catch((e) => ({ fout: e instanceof Error ? e.message : String(e) }));
+      return antwoord({ ...prijzen, dagkost, kwartier, forecast });
+    }
+    if (actie === "kwartier_backfill") {
+      const t = await tickToken();
+      if (!t || body.token !== t) return antwoord({ fout: "Geen toegang" }, 403);
+      const per = body.per === "uur" ? "uur" : "kwartier", vandaag = isoDag(new Date()), grens = dagPlus(vandaag, -KW_DAGEN);
+      const geldig = (x: unknown) => typeof x === "string" && /^\d{4}-\d{2}-\d{2}$/.test(x);
+      let van = geldig(body.van) ? body.van as string : (per === "uur" ? KOST_VAN : grens);
+      let tot = geldig(body.tot) ? body.tot as string : vandaag;
+      // Uur- en kwartierrijen mogen niet overlappen: uur enkel vóór de grens, kwartier enkel vanaf de grens
+      if (per === "uur" && tot >= grens) tot = dagPlus(grens, -1);
+      if (per === "kwartier" && van < grens) van = grens;
+      if (van < KOST_VAN) van = KOST_VAN;
+      if (tot > dagPlus(van, 30)) tot = dagPlus(van, 30);
+      if (tot < van) return antwoord({ per, van, tot, bewaard: 0 });
+      const uit = [];
+      for (const k of await koppelingen()) uit.push(await kwartierBij(k, van, tot, per));
+      return antwoord(uit);
     }
     if (actie === "tick") {
       if (typeof body.token !== "string" || body.token.length < 20) return antwoord({ fout: "Geen toegang" }, 403);
@@ -530,6 +657,7 @@ Deno.serve(async (req) => {
     if (actie === "laadmodus") {
       if (!MODI.includes(modus)) return antwoord({ fout: "Onbekende laadmodus" }, 400);
       await rpc(auth, "energie_registreer", { p_actie: "laadmodus", p_waarde: modus });   // weigert tieners en kinderen
+      await rpc(auth, "laadregel_overrule", { p_aan: true, p_reden: `manueel in Kring: ${modus}` }).catch(() => null);   // laadregel pauzeren voor deze sessie
       if (modus !== "off") await rpc(auth, "laadvenster_modus", { p_modus: modus });
       const v = await vensterLees(auth);
       let melding = "";
@@ -553,6 +681,7 @@ Deno.serve(async (req) => {
       if (uren !== null && !(uren >= 0 && uren <= 24)) return antwoord({ fout: "Ongeldige duur" }, 400);
       const m = body.modus === "smart" ? "smart" : "now";
       await rpc(auth, "laadvenster_toch", { p_uren: uren });   // weigert tieners en kinderen
+      if (uren !== 0) await rpc(auth, "laadregel_overrule", { p_aan: true, p_reden: "Toch laden in Kring" }).catch(() => null);
       if (uren === 0) { const t = await tickToken(); if (t) await vensterToepassen(t); }   // stoppen: bewaking zet meteen op Uit
       else await haDienst("kring_evcc_mode", { mode: m });
       await new Promise((r) => setTimeout(r, 800));
@@ -561,9 +690,14 @@ Deno.serve(async (req) => {
     if (actie === "altijd") {
       const w = body.waarde === "on" ? "on" : "off";
       await rpc(auth, "energie_registreer", { p_actie: "altijd laden", p_waarde: w });   // weigert tieners en kinderen
+      await rpc(auth, "laadregel_overrule", { p_aan: true, p_reden: `Altijd laden ${w} in Kring` }).catch(() => null);
       await haDienst("kring_evcc_alwayscharge", { waarde: w });
       await new Promise((r) => setTimeout(r, 800));
       return antwoord(await statusVoor(auth, true));
+    }
+    if (actie === "regels") {   // knop "Regels overrulen": aan = regels volgen, uit = gepauzeerd voor de lopende sessie
+      const r = await rpc(auth, "laadregel_overrule", { p_aan: !body.aan, p_reden: "knop Regels overrulen in Kring" });
+      return antwoord({ ...(await statusVoor(auth, true)), melding: r?.ok ? "" : (r?.melding || "") });
     }
     if (actie === "minstroom") {
       const a = Number(body.ampere);
