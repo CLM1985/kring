@@ -48,18 +48,31 @@ async function haDienst(dienst: string, data: Record<string, unknown> = {}) {
 }
 // Beslissing uit gezin.laadplan (via public.laadsturing): now | smart | off, altijd laden uit.
 // Staat evcc anders dan wat de regel laatst zette, dan heeft iemand manueel ingegrepen → overrule voor de rest van de sessie.
-async function sturen(sb: ReturnType<typeof createClient>, sessie: number, log: (r: Record<string, unknown>) => unknown, basis: Record<string, unknown>) {
+async function haSensor(id: string | null) {
+  if (!id || !/^sensor\.[a-z0-9_]+$/.test(id) || !HA_URL || !HA_TOKEN) return null;
+  try {
+    const r = await fetch(`${HA_URL}/api/states/${id}`, { headers: { Authorization: `Bearer ${HA_TOKEN}` }, signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return null;
+    const v = parseFloat((await r.json()).state);
+    return isFinite(v) && v > 0 && v <= 100 ? v : null;
+  } catch { return null; }
+}
+async function sturen(sb: ReturnType<typeof createClient>, sessie: number, kw: number, log: (r: Record<string, unknown>) => unknown, basis: Record<string, unknown>) {
   const c = await haDienst("kring_evcc_state");
   const lp = ((c?.result || c || {}).loadpoints || [])[0] || {};
-  const soc = typeof lp.vehicleSoc === "number" && lp.vehicleSoc > 0 ? lp.vehicleSoc : null;
-  const { data: b, error } = await sb.rpc("laadsturing", { p_sessie: sessie, p_soc: soc, p_evcc_modus: lp.mode ?? null, p_evcc_altijd: !!lp.alwaysCharge });
+  // batterij%: evcc, anders de HA-sensor van de wagen (gezin.wagens.soc_sensor; de Audi geeft via evcc geen %)
+  let soc = typeof lp.vehicleSoc === "number" && lp.vehicleSoc > 0 ? lp.vehicleSoc : null;
+  if (soc == null) { const { data: sensor } = await sb.rpc("laadsessie_soc_sensor", { p_sessie: sessie }); soc = await haSensor(sensor ?? null); }
+  const altijd = lp.alwaysCharge === true || lp.alwaysCharge === "on";   // evcc geeft "on" | "off" | "once"
+  const { data: b, error } = await sb.rpc("laadsturing", { p_sessie: sessie, p_soc: soc, p_evcc_modus: lp.mode ?? null, p_evcc_altijd: altijd, p_kw: kw });
   if (error) throw new Error("laadsturing: " + error.message);
   if (b?.override) await log({ ...basis, actie: "overrule", detail: b.reden });
+  if (b?.vol) await log({ ...basis, actie: "melding", detail: `${b.wagen}: laadt niet meer op Snel → als vol beschouwd · soc ${soc ?? "?"}` });
   if (!b?.modus) return b;
   if (b.doen) {
-    if (lp.alwaysCharge) await haDienst("kring_evcc_alwayscharge", { waarde: "off" });
+    if (altijd) await haDienst("kring_evcc_alwayscharge", { waarde: "off" });
     if (lp.mode !== b.modus) await haDienst("kring_evcc_mode", { mode: b.modus });
-    await log({ ...basis, actie: "sturing", detail: `${b.wagen}: ${lp.mode}${lp.alwaysCharge ? " + altijd laden" : ""} → ${b.modus} · ${b.reden} · soc ${soc ?? "?"}`.slice(0, 500) });
+    await log({ ...basis, actie: "sturing", detail: `${b.wagen}: ${lp.mode}${altijd ? " + altijd laden" : ""} → ${b.modus} · ${b.reden} · soc ${soc ?? "?"}`.slice(0, 500) });
   }
   await sb.rpc("laadsturing_gezet", { p_sessie: sessie, p_modus: b.modus, p_altijd: false });
   return b;
@@ -146,7 +159,7 @@ Deno.serve(async (request) => {
       await log({ ...basis, actie: "controle", detail: `${wagen} · ${clm ? "CLM" : "andere kaart"} · ${k.NOTIFICATION ?? ""} · bron ${ha == null ? "portaal" : "evcc"} · tijd ${String(k.TRANSACTION_TIME_H_M)}` });
       // Stap 4: de regel van de herkende wagen stuurt evcc (enkel als regel_actief en geen overrule)
       if (herk?.id) {
-        try { const b = await sturen(sb, herk.id, log, basis); uit.push({ kanaal: k.CHANNEL, sturing: b?.modus ?? null, reden: b?.reden ?? null }); }
+        try { const b = await sturen(sb, herk.id, kw, log, basis); uit.push({ kanaal: k.CHANNEL, sturing: b?.modus ?? null, reden: b?.reden ?? null }); }
         catch (e) { await log({ ...basis, actie: "fout", detail: ("sturing: " + (e instanceof Error ? e.message : String(e))).slice(0, 500) }); }
       }
       if (!clm) { uit.push({ kanaal: k.CHANNEL, kaart, min, actie: "andere kaart" }); continue; }
