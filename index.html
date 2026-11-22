@@ -4687,6 +4687,11 @@ body:not(.breed) .en-grafiek{order:9}
 .en-wagen .en-plan{margin-top:8px;padding-top:8px;border-top:1px solid var(--line, rgba(127,127,127,.25));font-size:.84rem;display:grid;gap:4px}
 .en-wagen .en-plan.uit{color:var(--muted)}
 .en-wagen .en-plan-let{color:#e5484d;font-weight:600}
+.en-sturing{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:10px}
+.en-sturing.uit{justify-content:space-between}
+.en-doel summary{cursor:pointer;font-size:.84rem;color:var(--muted)}
+.en-doel-rij{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:6px;font-size:.84rem}
+.en-doel-rij input{font:inherit;padding:2px 4px}
 .en-wagen .en-plan .knop{justify-self:start;margin-top:2px}
 .en-wagen .en-fotoknop{position:absolute;top:12px;right:12px;font-size:.75rem;background:rgba(255,255,255,.85);color:#15171c;border-radius:99px;padding:2px 8px;cursor:pointer}
 .en-wagen .en-fotoknop input{display:none}
@@ -4913,7 +4918,8 @@ window.EN_LOCAL = {
     e.modus = actief && !enBinnen(van, tot) ? "off" : (e.vmodus || "smart"); this.save(); return { ...enDemoMetA(enDemoStatus(e.modus), e), venster: enDemoVenster(e) }; },
   async zetMinStroom(a) { const e = this.d.energie = { ...(this.d.energie || {}), minA: a }; this.save(); return { ...enDemoMetA(enDemoStatus(e.modus || "smart"), e), venster: enDemoVenster(e) }; },
   async zetAltijd(aan) { const e = this.d.energie = { ...(this.d.energie || {}), altijd: aan }; this.save(); const st = enDemoMetA(enDemoStatus(e.modus || "smart"), e); return { ...st, venster: enDemoVenster(e) }; },
-  async zetRegels(aan) { return { ...(await this.loadEnergie("status")), melding: aan ? "Regels hervat" : "Regels gepauzeerd" }; },
+  async zetRegels(aan, modus) { return { ...(await this.loadEnergie("status")), melding: aan ? "Volgens plan" : "Overrule: " + modus }; },
+  async zetDoel() { return { ...(await this.loadEnergie("status")), melding: "Doel aangepast (testversie)" }; },
   async zetToch(uren) { const e = this.d.energie = { ...(this.d.energie || {}) }, v = e.venster || {};
     if (uren === 0) { e.toch = null; e.modus = "off"; }
     else { let t; if (uren == null) { t = new Date(); const [h, m] = (v.van || "22:00").split(":"); t.setHours(+h, +m, 0, 0); if (t <= new Date()) t.setDate(t.getDate() + 1); } else t = new Date(Date.now() + uren * 3600e3); e.toch = t.toISOString(); e.modus = "now"; }
@@ -4941,7 +4947,8 @@ window.EN_SUPA = {
   async zetToch(uren) { return this.enRoep({ actie: "toch", uren, modus: "now" }); },
   async zetAltijd(aan) { return this.enRoep({ actie: "altijd", waarde: aan ? "on" : "off" }); },
   async zetMinStroom(a) { return this.enRoep({ actie: "minstroom", ampere: a }); },
-  async zetRegels(aan) { return this.enRoep({ actie: "regels", aan }); },
+  async zetRegels(aan, modus) { return this.enRoep({ actie: "regels", aan, modus }); },
+  async zetDoel(uur, kwh) { return this.enRoep({ actie: "doel", uur, kwh }); },
   async loadWagens() { return this.ok(await this.g.from("wagens").select("id, naam, evcc_titel, foto, volgorde").eq("huishouden_id", this.h).order("volgorde")); },
   async zetWagenFoto(id, foto) { this.ok(await this.g.from("wagens").update({ foto }).eq("id", id).eq("huishouden_id", this.h)); }
 };
@@ -4977,11 +4984,7 @@ function viewEnergie() {
   const laad = `<section class="en-blok en-laad"><h3>${esc(lp.titel || "Laadpaal")}</h3>
     ${enWagensHtml(s, e.wagenCfg)}
     <div class="en-st"><span>${laadSt}${lp.wagen ? " · " + esc(lp.wagen) : ""}${lp.soc ? " · " + Math.round(lp.soc) + " %" : ""}</span>${lp.verbonden && lp.sessieKwh ? `<span class="muted">${lp.sessieKwh.toLocaleString("nl-BE")} kWh deze sessie</span>` : ""}</div>
-    <div class="seg" role="group" aria-label="Laadmodus">${EN_MODI.map(([k, l]) => `<button data-enmodus="${k}" aria-pressed="${lp.modus === k}" ${s.magSturen ? "" : "disabled"}>${l}</button>`).join("")}</div>
-    <p class="en-uitleg">${s.magSturen ? modusUitleg : "Alleen volwassenen kunnen de laadmodus wijzigen. " + modusUitleg}</p>
-    ${lp.modus === "smart" ? `<label class="en-schakel en-altijd"><input type="checkbox" data-enaltijd ${lp.altijdLaden === "on" ? "checked" : ""} ${s.magSturen ? "" : "disabled"}>
-      <span><b>Altijd laden</b> <span class="muted">· minstens ${lp.minA || 6} A, zon extra (handig als er weinig zon is)</span></span></label>` : ""}
-    ${enStroomKeuze(s)}${enVensterHtml(s)}</section>`;
+    ${enSturingHtml(s)}</section>`;
 
   const advHtml = `<section class="en-blok"><h3>Beste moment om te starten</h3><ul class="en-adv">${adv.map(a => {
       const t = a.toestel, b = a.best;
@@ -5038,8 +5041,7 @@ const enDagVan = t => { if (!t) return ""; const d = String(t).slice(0, 10), f =
 function enPlanHtml(w, s) {
   const p = w.plan; if (!p || !p.regel || !p.actief) return "";
   const kwh = x => Number(x || 0).toLocaleString("nl-BE", { maximumFractionDigits: 1 });
-  if (w.aanPaal && p.override) return `<div class="en-plan uit"><div>⏸ Regels gepauzeerd${p.override_reden ? ` <span class="muted">(${esc(p.override_reden)})</span>` : ""}</div>
-    ${s.magSturen ? `<button class="knop sec klein" data-enregels="1">Regels hervatten</button>` : ""}</div>`;
+  if (w.aanPaal && p.override) return `<div class="en-plan uit"><div>⏸ Plan gepauzeerd${p.override_reden ? ` <span class="muted">(${esc(p.override_reden)})</span>` : ""}</div></div>`;
   const doel = `${enDagVan(p.doel)}${enHm(p.doel)}`;
   const stil = w.aanPaal && p.laadt_niet ? `<div class="en-plan-let">⚠ ${esc(w.evcc)} neemt geen stroom sinds ${esc(p.stil_sinds || "")} terwijl het plan wil laden: open de app van de wagen om hem te wekken.</div>` : "";
   const niveau = p.soc_verwacht != null ? `<b>${p.soc_nu != null ? Math.round(p.soc_nu) + " % → " : ""}${p.soc_verwacht} %</b> om ${doel}` : `<b>+${kwh(Number(p.zon_kwh) + Number(p.net_kwh))} kWh</b> tegen ${doel}`;
@@ -5047,7 +5049,27 @@ function enPlanHtml(w, s) {
   return `<div class="en-plan">${stil}
     <div>${w.aanPaal ? "Verwacht" : "Als je nu insteekt"}: ${niveau}</div>
     <div class="en-w-sub">${esc(bron)}${p.klaar_om ? ` · klaar ± ${enDagVan(p.klaar_om)}${enHm(p.klaar_om)}` : ""}${Number(p.tekort_kwh) > 0 ? ` · <span style="color:#e5484d">${kwh(p.tekort_kwh)} kWh tekort</span>` : ""}</div>
-    ${w.aanPaal ? `<div class="en-w-sub">${esc(p.reden || "")}</div>${s.magSturen ? `<button class="knop sec klein" data-enregels="0">Regels overrulen</button>` : ""}` : ""}</div>`;
+    ${w.aanPaal ? `<div class="en-w-sub">${esc(p.reden || "")}</div>${s.magSturen ? enDoelHtml(p) : ""}` : ""}</div>`;
+}
+/* Doel voor de lopende sessie: vertrekuur en/of kWh (bv. "morgen al om 6 u weg", "vandaag maar 5 kWh") */
+function enDoelHtml(p) {
+  return `<details class="en-doel"><summary>✏️ Doel aanpassen${p.eigen_doel ? " (aangepast)" : ""}</summary>
+    <div class="en-doel-rij"><label>Klaar om <input type="time" id="en-doel-uur" value="${esc(enHm(p.doel))}"></label>
+    <label>kWh <input type="number" id="en-doel-kwh" min="0" max="100" step="1" value="${p.doel_kwh != null ? Number(p.doel_kwh) : ""}" style="width:5em"></label></div>
+    <div class="en-doel-rij"><button class="knop klein" data-endoel>Opslaan</button><button class="knop sec klein" data-endoel-reset>Standaard</button>
+    <span class="muted">geldt tot uitpluggen</span></div></details>`;
+}
+/* Sturing van de laadpaal: volgens plan (de regel van de wagen, ook voor onbekende kaarten) of overrulen tot uitpluggen */
+function enSturingHtml(s) {
+  const lp = s.laadpunt || {}, se = s.sessie || {}, dis = s.magSturen ? "" : "disabled";
+  if (!lp.verbonden) return `<p class="en-uitleg">Geen wagen aangesloten. Bij het insteken herkent Kring de wagen aan de laadkaart en laadt hij volgens zijn plan.</p>`;
+  if (!se.sessie) return `<p class="en-uitleg">Wagen net aangesloten: de laadkaart wordt herkend en het plan volgt binnen 5 minuten.</p>`;
+  const naam = { now: "Nu laden", smart: "Alleen zon", off: "Niet laden" };
+  const onb = !se.herkend ? `<p class="en-uitleg"><b>Onbekende wagen</b> · standaardregel: zonoverschot en de goedkoopste nachtkwartieren${se.plan && se.plan.reden ? ` · ${esc(se.plan.reden)}` : ""}.</p>` : "";
+  if (se.override) return `${onb}<div class="en-sturing uit"><div>⏸ <b>${esc(naam[se.override_modus] || "Overrule")}</b> tot de wagen uitgeplugd wordt${se.override_reden && !naam[se.override_modus] ? ` <span class="muted">(${esc(se.override_reden)})</span>` : ""}</div>
+    <button class="knop klein" data-enregels="plan" ${dis}>Plan hervatten</button></div>`;
+  return `${onb}<div class="en-sturing"><span class="muted">Regels overrulen tot uitpluggen:</span>
+    ${["now", "smart", "off"].map(k => `<button class="knop sec klein" data-enregels="${k}" ${dis}>${naam[k]}</button>`).join("")}</div>`;
 }
 /* Foto verkleinen in de browser (max 640 px breed, webp) en bewaren */
 async function enFotoBewaar(id, f) {
@@ -5073,10 +5095,10 @@ function enStroomKeuze(s) {
     : lp.modus === "now" ? (nuA < max - 0.5 ? "Snel: de wagen neemt minder dan het maximum." : "Snel: laadt aan het maximum.")
     : nuA <= min + 0.5 ? "Slim zonder zonne-overschot: laadt aan het minimum." : "Slim: minimum plus het zonne-overschot.";
   const dis = s.magSturen ? "" : "disabled";
-  const toonMin = lp.modus === "smart" && lp.altijdLaden === "on";
+  const toonMin = true;   // het minimum bepaalt hoe ver evcc kan afbouwen voor het pauzeert (netgrens)
   return `<div class="en-sub-blok"><div class="en-sub-kop"><b>Laadstroom</b><span class="en-nu-a">${lp.laadt ? `nu <b>${Math.round(nuA)} A</b> · ${enKw(lp.vermogen)} kW` : "nu 0 A"}</span></div>
     <p class="en-uitleg" style="margin:0 0 8px">${waarom}</p>
-    ${toonMin ? `<div class="en-grens"><span>Minimum <span class="muted">(Altijd laden)</span></span><span class="muted">${min} A ≈ ${kw(min)} kW</span></div>
+    ${toonMin ? `<div class="en-grens"><span>Minimum <span class="muted">(6 A = minder pauzes bij de netgrens)</span></span><span class="muted">${min} A ≈ ${kw(min)} kW</span></div>
     <div class="seg en-klein" role="group" aria-label="Minimale laadstroom">${[6, 8, 10, 13].map(x => `<button data-enminampere="${x}" aria-pressed="${min === x}" ${dis || (x > max ? "disabled" : "")}>${x} A</button>`).join("")}</div>` : ""}
     <div class="en-grens"><span>Maximum</span><span class="muted">${max} A ≈ ${kw(max)} kW</span></div>
     <div class="seg en-klein" role="group" aria-label="Maximale laadstroom">${EN_AMPERE.map(x => `<button data-enampere="${x}" aria-pressed="${max === x}" ${dis || (x < min ? "disabled" : "")}>${x} A</button>`).join("")}</div>
@@ -5396,10 +5418,10 @@ function enKostHover() {
 document.addEventListener("click", ev => {
   const mn = ev.target.closest("[data-enminampere]");
   if (mn) { const e = S.en || {}, a = +mn.dataset.enminampere; if (!e.status || !e.status.magSturen) return;
-    run(async () => { try { e.status = await db.zetMinStroom(a); e.t = Date.now(); toast(`Minimum: ${a} A`); } finally { if (S.tab === "energie") viewEnergie(); } }); return; }
+    run(async () => { try { e.status = await db.zetMinStroom(a); e.t = Date.now(); toast(`Minimum: ${a} A`); } finally { if (S.tab === "energie") viewEnergie(); if (document.querySelector("#paneel [data-enampere]")) openInstellingen(); } }); return; }
   const am = ev.target.closest("[data-enampere]");
   if (am) { const e = S.en || {}, a = +am.dataset.enampere; if (!e.status || !e.status.magSturen) return;
-    run(async () => { try { e.status = await db.zetStroom(a); e.t = Date.now(); toast(`Laadstroom: max ${a} A`); } finally { if (S.tab === "energie") viewEnergie(); } }); return; }
+    run(async () => { try { e.status = await db.zetStroom(a); e.t = Date.now(); toast(`Laadstroom: max ${a} A`); } finally { if (S.tab === "energie") viewEnergie(); if (document.querySelector("#paneel [data-enampere]")) openInstellingen(); } }); return; }
   const tc = ev.target.closest("[data-entoch]");
   if (tc) { const e = S.en || {}; if (!e.status || !e.status.magSturen) return; const k = tc.dataset.entoch, uren = k === "venster" ? null : +k;
     run(async () => { try { e.status = await db.zetToch(uren); e.t = Date.now(); toast(uren === 0 ? "Gestopt: de paal staat weer op Uit" : "Toch laden gestart (Snel)"); } finally { if (S.tab === "energie") viewEnergie(); } }); return; }
@@ -5426,9 +5448,18 @@ document.addEventListener("click", ev => {
 document.addEventListener("click", ev => {
   const b = ev.target && ev.target.closest && ev.target.closest("[data-enregels]"); if (!b) return;
   const e = S.en || {}; if (!e.status || !e.status.magSturen) return;
-  const aan = b.dataset.enregels === "1";
+  const v = b.dataset.enregels, aan = v === "plan";
   run(async () => {
-    try { e.status = await db.zetRegels(aan); e.t = Date.now(); toast(e.status.melding || (aan ? "Laadregels hervat" : "Laadregels gepauzeerd voor deze sessie")); }
+    try { e.status = await db.zetRegels(aan, aan ? null : v); e.t = Date.now(); toast(e.status.melding || (aan ? "Volgens plan" : "Overrule tot uitpluggen")); }
+    finally { if (S.tab === "energie") viewEnergie(); }
+  });
+});
+document.addEventListener("click", ev => {
+  const b = ev.target && ev.target.closest && ev.target.closest("[data-endoel],[data-endoel-reset]"); if (!b) return;
+  const e = S.en || {}; if (!e.status || !e.status.magSturen) return;
+  const reset = "endoelReset" in b.dataset, uur = reset ? null : ($("#en-doel-uur") || {}).value || null, kv = reset ? "" : ($("#en-doel-kwh") || {}).value;
+  run(async () => {
+    try { e.status = await db.zetDoel(uur, kv === "" || kv == null ? null : Number(kv)); e.t = Date.now(); toast(e.status.melding || "Doel aangepast"); }
     finally { if (S.tab === "energie") viewEnergie(); }
   });
 });
@@ -6313,6 +6344,7 @@ function openInstellingen(){
       <div class="lbl-klein">Maaltijdmomenten in het weekmenu</div>
       <div class="chips" style="margin:0">${MOMENTEN.map(([k, l]) => `<label class="toggle chip"><input type="checkbox" data-moment="${k}" ${S.momenten.includes(k) ? "checked" : ""}> ${l}</label>`).join("")}</div>
       ${instellingenAgendaHtml()}
+      ${S.en && S.en.status && S.en.status.magSturen && S.en.status.laadpunt ? `<div class="lbl-klein">Laadpaal (technisch)</div>${enStroomKeuze(S.en.status)}` : ""}
       ${vsInstHtml()}
       ${r5InstHtml()}
       ${db.demo ? `<p class="muted">Testversie: gegevens staan enkel in deze browser.</p><div><button class="knop gevaar" data-reset>Testdata herstellen</button></div>`

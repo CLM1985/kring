@@ -92,6 +92,8 @@ Geen persoonlijke data in deze publieke repo: geen recepten, producten, tickets 
 - **Regel per wagen** in `gezin.wagens` (`regel_actief`, `regel_modus`, `plan_tijd`, `plan_kwh`, venster, blok 17–21, weekend overdag, `capaciteit_kwh`).
 - **Laadplan:** `gezin.laadplan(wagen)` verdeelt wat nog nodig is over de kwartieren tot het doeluur: eerst verwachte zon (`gezin.zon_forecast`, Forecast.Solar via evcc), dan de goedkoopste kwartieren (`gezin.prijs_forecast`, evcc). Laadpas CLM: alles binnen 11 u 40 (bezettingsvergoeding).
 - **Sturing:** `laadpaal-bewaking` zet evcc per kwartier op Snel (gepland kwartier), Slim (zonoverschot) of Uit, met Altijd laden uit. Log in `gezin.laadbewaking_log` (actie `sturing`).
-- **Overrulen:** knop *Regels overrulen* op de wagenkaart (actie `regels`), of elke manuele laadmodus / Toch laden / Altijd laden in Kring, of een wijziging in evcc zelf → regels gepauzeerd voor de lopende sessie. *Regels hervatten* geeft de controle terug.
-- **Laadvenster:** zolang een regel stuurt, laat de vensterbewaking evcc met rust; het venster geldt voor onbekende kaarten.
+- **Twee keuzes in Kring:** *volgens plan* (standaard) of *Regels overrulen tot uitpluggen*: Nu laden, Alleen zon of Niet laden (actie `regels`). Een wijziging in evcc zelf telt ook als overrule. *Plan hervatten* geeft de controle terug.
+- **Doel per sessie:** ✏️ *Doel aanpassen* op de wagenkaart (klaar om, kWh), geldt tot uitpluggen (actie `doel`).
+- **Onbekende kaart:** standaardregel (`gezin.wagens.standaard`): zonoverschot en de goedkoopste nachtkwartieren, 10 kWh tegen 07:00.
+- **Laadvenster en modusknoppen:** niet meer op de Energie-pagina (venster uitgezet op 22/11/2026). Laadstroom (min/max) staat bij Instellingen → Laadpaal (technisch).
 - **Verwachting in Kring:** de wagenkaart toont het verwachte laadniveau op het doeluur (batterij% uit evcc of de HA-sensor), zon/net, kost en wanneer klaar.
