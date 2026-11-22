@@ -28,6 +28,7 @@ Vandaag · Agenda · Eten (weekmenu, gerechten, boodschappen/bestellijst, diepvr
 | `supabase/migrations/20261116_gezin_energie_dagprijs.sql` | Dagprijs-historiek (all-in, uit de publieke Frank-marktprijzen) voor de indeling goedkope / normale / dure dag; pg_cron vult elk uur aan |
 | `supabase/migrations/20261119_gezin_energie_dagkost.sql` | Kost per dag van de stroom (kWh afname/injectie en Σ kWh × marktprijs per dag, maandpiek); gevuld door `ha-energie`, leesbaar voor elk gezinslid |
 | `supabase/functions/ha-energie` | Energiepagina: evcc lezen en laadmodus Uit/Slim/Snel zetten via Home Assistant (JWT verplicht; HA-token enkel als geheim) |
+| `supabase/functions/ha-apparaten` | Energiepagina: kWh per kwartier per apparaat uit het energiedashboard van HA (Individuele apparaten), voor *Per apparaat* en *Waar ging de stroom naartoe?* (JWT zelf gecontroleerd; deploy met `--no-verify-jwt`) |
 | `supabase/functions/agenda-feed` | Kring-agenda als ICS-feed voor Google/iPhone (zonder JWT, geheime token) |
 
 De vroegere losse bronbestanden (`src/*.js`, `build.js`) en de 4 migraties van 8/11 zijn vervangen; ze staan nog in de git-historiek.
