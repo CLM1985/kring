@@ -11,6 +11,7 @@
 // (public.laadsessie_wagen_zien); controle tegen EVC-net in gezin.v_laadsessie_wagen_controle.
 // Sturing (stap 4, sinds 22/11/2026): voor een herkende wagen met regel_actief zet de bewaking evcc op now/smart/off volgens
 // gezin.laadplan (zon eerst, dan de goedkoopste kwartieren tot het doel). Manuele wijziging of knop in Kring = overrule voor de sessie.
+// Neemt de wagen op Snel 10 min geen stroom zonder netgrens (slaapt of weigert), dan één melding naar de gsm (wagens.melding_dienst).
 // ?test=1 → enkel het overzicht van de laadpaal tonen, niets loggen of stoppen.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
@@ -48,18 +49,52 @@ async function haDienst(dienst: string, data: Record<string, unknown> = {}) {
 }
 // Beslissing uit gezin.laadplan (via public.laadsturing): now | smart | off, altijd laden uit.
 // Staat evcc anders dan wat de regel laatst zette, dan heeft iemand manueel ingegrepen → overrule voor de rest van de sessie.
-async function sturen(sb: ReturnType<typeof createClient>, sessie: number, log: (r: Record<string, unknown>) => unknown, basis: Record<string, unknown>) {
+async function haStaat(id: string | null): Promise<string | null> {
+  if (!id || !/^sensor\.[a-z0-9_]+$/.test(id) || !HA_URL || !HA_TOKEN) return null;
+  try {
+    const r = await fetch(`${HA_URL}/api/states/${id}`, { headers: { Authorization: `Bearer ${HA_TOKEN}` }, signal: AbortSignal.timeout(8000) });
+    return r.ok ? String((await r.json()).state) : null;
+  } catch { return null; }
+}
+// Batterij% uit HA, enkel als de wagen recent gegevens stuurde (tijd_sensor, max. max_min minuten oud)
+async function haSoc(info: { soc_sensor?: string; tijd_sensor?: string; max_min?: number } | null) {
+  if (!info?.soc_sensor) return null;
+  if (info.tijd_sensor) {
+    const t = Date.parse(String(await haStaat(info.tijd_sensor)));
+    if (!isFinite(t) || Date.now() - t > (info.max_min ?? 60) * 60000) return null;
+  }
+  const v = parseFloat(String(await haStaat(info.soc_sensor)));
+  return isFinite(v) && v > 0 && v <= 100 ? v : null;
+}
+async function haMelding(dienst: string, titel: string, tekst: string) {
+  if (!/^mobile_app_[a-z0-9_]+$/.test(dienst)) return;
+  await fetch(`${HA_URL}/api/services/notify/${dienst}`, {
+    method: "POST", headers: { Authorization: `Bearer ${HA_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ title: titel, message: tekst }), signal: AbortSignal.timeout(10000),
+  });
+}
+async function sturen(sb: ReturnType<typeof createClient>, sessie: number, kw: number, log: (r: Record<string, unknown>) => unknown, basis: Record<string, unknown>) {
   const c = await haDienst("kring_evcc_state");
-  const lp = ((c?.result || c || {}).loadpoints || [])[0] || {};
-  const soc = typeof lp.vehicleSoc === "number" && lp.vehicleSoc > 0 ? lp.vehicleSoc : null;
-  const { data: b, error } = await sb.rpc("laadsturing", { p_sessie: sessie, p_soc: soc, p_evcc_modus: lp.mode ?? null, p_evcc_altijd: !!lp.alwaysCharge });
+  const st = c?.result || c || {}, lp = (st.loadpoints || [])[0] || {};
+  const net = typeof st.grid?.power === "number" ? st.grid.power / 1000 : null;
+  // batterij%: evcc, anders de HA-sensor van de wagen als die vers is (de Audi geeft via evcc geen %; EU Data Act loopt soms een dag achter)
+  let soc = typeof lp.vehicleSoc === "number" && lp.vehicleSoc > 0 ? lp.vehicleSoc : null;
+  if (soc == null) { const { data: info } = await sb.rpc("laadsessie_wagen_info", { p_sessie: sessie }); soc = await haSoc(info ?? null); }
+  const altijd = lp.alwaysCharge === true || lp.alwaysCharge === "on";   // evcc geeft "on" | "off" | "once"
+  const { data: b, error } = await sb.rpc("laadsturing", { p_sessie: sessie, p_soc: soc, p_evcc_modus: lp.mode ?? null, p_evcc_altijd: altijd, p_kw: kw, p_net_kw: net });
   if (error) throw new Error("laadsturing: " + error.message);
   if (b?.override) await log({ ...basis, actie: "overrule", detail: b.reden });
+  if (b?.wekken) {
+    const tekst = `${b.naam ?? b.wagen} neemt al 10 minuten geen stroom terwijl het laadplan nu wil laden. Open de app van de wagen om hem te wekken.`;
+    await log({ ...basis, actie: "melding", detail: `${b.wagen}: laadt niet op Snel (geen netgrens) → wekken gevraagd${b.melding_dienst ? " via " + b.melding_dienst : ""}` });
+    if (b.melding_dienst) await haMelding(b.melding_dienst, `${b.naam ?? b.wagen} laadt niet`, tekst).catch(() => null);
+  }
+  if (b?.vol) await log({ ...basis, actie: "melding", detail: `${b.wagen}: laadt niet meer op Snel → als vol beschouwd · soc ${soc ?? "?"}` });
   if (!b?.modus) return b;
   if (b.doen) {
-    if (lp.alwaysCharge) await haDienst("kring_evcc_alwayscharge", { waarde: "off" });
+    if (altijd) await haDienst("kring_evcc_alwayscharge", { waarde: "off" });
     if (lp.mode !== b.modus) await haDienst("kring_evcc_mode", { mode: b.modus });
-    await log({ ...basis, actie: "sturing", detail: `${b.wagen}: ${lp.mode}${lp.alwaysCharge ? " + altijd laden" : ""} → ${b.modus} · ${b.reden} · soc ${soc ?? "?"}`.slice(0, 500) });
+    await log({ ...basis, actie: "sturing", detail: `${b.wagen}: ${lp.mode}${altijd ? " + altijd laden" : ""} → ${b.modus} · ${b.reden} · soc ${soc ?? "?"}`.slice(0, 500) });
   }
   await sb.rpc("laadsturing_gezet", { p_sessie: sessie, p_modus: b.modus, p_altijd: false });
   return b;
@@ -146,7 +181,7 @@ Deno.serve(async (request) => {
       await log({ ...basis, actie: "controle", detail: `${wagen} · ${clm ? "CLM" : "andere kaart"} · ${k.NOTIFICATION ?? ""} · bron ${ha == null ? "portaal" : "evcc"} · tijd ${String(k.TRANSACTION_TIME_H_M)}` });
       // Stap 4: de regel van de herkende wagen stuurt evcc (enkel als regel_actief en geen overrule)
       if (herk?.id) {
-        try { const b = await sturen(sb, herk.id, log, basis); uit.push({ kanaal: k.CHANNEL, sturing: b?.modus ?? null, reden: b?.reden ?? null }); }
+        try { const b = await sturen(sb, herk.id, kw, log, basis); uit.push({ kanaal: k.CHANNEL, sturing: b?.modus ?? null, reden: b?.reden ?? null }); }
         catch (e) { await log({ ...basis, actie: "fout", detail: ("sturing: " + (e instanceof Error ? e.message : String(e))).slice(0, 500) }); }
       }
       if (!clm) { uit.push({ kanaal: k.CHANNEL, kaart, min, actie: "andere kaart" }); continue; }
