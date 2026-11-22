@@ -4686,6 +4686,7 @@ body:not(.breed) .en-grafiek{order:9}
 .en-wagen .en-w-sub{font-size:.78rem;color:var(--muted)}
 .en-wagen .en-plan{margin-top:8px;padding-top:8px;border-top:1px solid var(--line, rgba(127,127,127,.25));font-size:.84rem;display:grid;gap:4px}
 .en-wagen .en-plan.uit{color:var(--muted)}
+.en-wagen .en-plan-let{color:#e5484d;font-weight:600}
 .en-wagen .en-plan .knop{justify-self:start;margin-top:2px}
 .en-wagen .en-fotoknop{position:absolute;top:12px;right:12px;font-size:.75rem;background:rgba(255,255,255,.85);color:#15171c;border-radius:99px;padding:2px 8px;cursor:pointer}
 .en-wagen .en-fotoknop input{display:none}
@@ -5024,6 +5025,7 @@ function enWagensHtml(s, cfg) {
       ${s.magSturen && c.id ? `<label class="en-fotoknop" title="Foto wijzigen">📷<input type="file" accept="image/*" data-enfoto="${c.id}"></label>` : ""}
       <div class="en-naam">${esc(c.naam || w.evcc)}</div>
       <div class="en-pct" style="color:${kl}">${pct == null ? "–" : pct + " %"}${w.bereik ? `<small>${Math.round(w.bereik)} km</small>` : ""}</div>
+      ${w.socStand ? `<div class="en-w-sub" title="De wagen stuurde geen recente gegevens; het oude batterij% wordt niet getoond">batterij% onbekend (laatste gegevens ${w.socStand === "onbekend" ? "onbekend" : new Date(w.socStand).toLocaleString("nl-BE", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Brussels" })})</div>` : ""}
       <div class="en-batt"><div style="width:${pct || 0}%;background-color:${kl}"></div></div>${st}${enPlanHtml(w, s)}</div>`;
   };
   return `<div class="en-wagens">${ws.map(kaart).join("")}</div>`;
@@ -5039,9 +5041,10 @@ function enPlanHtml(w, s) {
   if (w.aanPaal && p.override) return `<div class="en-plan uit"><div>⏸ Regels gepauzeerd${p.override_reden ? ` <span class="muted">(${esc(p.override_reden)})</span>` : ""}</div>
     ${s.magSturen ? `<button class="knop sec klein" data-enregels="1">Regels hervatten</button>` : ""}</div>`;
   const doel = `${enDagVan(p.doel)}${enHm(p.doel)}`;
+  const stil = w.aanPaal && p.laadt_niet ? `<div class="en-plan-let">⚠ ${esc(w.evcc)} neemt geen stroom sinds ${esc(p.stil_sinds || "")} terwijl het plan wil laden: open de app van de wagen om hem te wekken.</div>` : "";
   const niveau = p.soc_verwacht != null ? `<b>${p.soc_nu != null ? Math.round(p.soc_nu) + " % → " : ""}${p.soc_verwacht} %</b> om ${doel}` : `<b>+${kwh(Number(p.zon_kwh) + Number(p.net_kwh))} kWh</b> tegen ${doel}`;
   const bron = Number(p.nodig_kwh) <= 0 ? "doel bereikt, enkel nog zon" : [Number(p.zon_kwh) > 0 ? `${kwh(p.zon_kwh)} kWh zon` : "", Number(p.net_kwh) > 0 ? `${kwh(p.net_kwh)} kWh net (± € ${Number(p.kost_eur).toLocaleString("nl-BE", { minimumFractionDigits: 2 })})` : ""].filter(Boolean).join(" + ");
-  return `<div class="en-plan">
+  return `<div class="en-plan">${stil}
     <div>${w.aanPaal ? "Verwacht" : "Als je nu insteekt"}: ${niveau}</div>
     <div class="en-w-sub">${esc(bron)}${p.klaar_om ? ` · klaar ± ${enDagVan(p.klaar_om)}${enHm(p.klaar_om)}` : ""}${Number(p.tekort_kwh) > 0 ? ` · <span style="color:#e5484d">${kwh(p.tekort_kwh)} kWh tekort</span>` : ""}</div>
     ${w.aanPaal ? `<div class="en-w-sub">${esc(p.reden || "")}</div>${s.magSturen ? `<button class="knop sec klein" data-enregels="0">Regels overrulen</button>` : ""}` : ""}</div>`;

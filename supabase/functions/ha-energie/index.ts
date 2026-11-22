@@ -176,7 +176,14 @@ function binnenVenster(van: string, tot: string, op = new Date()) {
 }
 // Wagens: de voertuigen uit evcc, aangevuld met gezin.wagens (naam, HA-sensoren). Batterij en bereik komen uit evcc
 // als de wagen aan de laadpaal hangt, anders uit de HA-sensoren (bv. de Volvo-integratie). De foto haalt de app zelf op.
-type Wagen = { evcc: string; soc: number | null; bereik: number | null; aanPaal: boolean; laadt: boolean; vermogen: number | null; resterendS: number | null; limiet: number | null; plan?: unknown };
+type Wagen = { evcc: string; soc: number | null; bereik: number | null; aanPaal: boolean; laadt: boolean; vermogen: number | null; resterendS: number | null; limiet: number | null; plan?: unknown; socStand?: string | null };
+async function haTekst(id: string | null) {
+  if (!id || !/^sensor\.[a-z0-9_]+$/.test(id)) return null;
+  try {
+    const r = await fetch(`${HA_URL}/api/states/${id}`, { headers: { Authorization: `Bearer ${HA_TOKEN}` }, signal: AbortSignal.timeout(8000) });
+    return r.ok ? String((await r.json()).state) : null;
+  } catch { return null; }
+}
 async function haWaarde(id: string | null) {
   if (!id || !/^sensor\.[a-z0-9_]+$/.test(id)) return null;
   try {
@@ -187,18 +194,24 @@ async function haWaarde(id: string | null) {
   } catch { return null; }
 }
 async function wagensLees(auth: string, st: Awaited<ReturnType<typeof evccStatus>>): Promise<Wagen[]> {
-  const r = await fetch(`${SB_URL}/rest/v1/wagens?select=id,evcc_titel,soc_sensor,bereik_sensor,volgorde,regel_modus&order=volgorde`, { headers: { apikey: SB_ANON, Authorization: auth, "Accept-Profile": "gezin" } });
-  const cfg = (r.ok ? await r.json() : []) as { id: string; evcc_titel: string; soc_sensor: string | null; bereik_sensor: string | null; regel_modus: string | null }[];
+  const r = await fetch(`${SB_URL}/rest/v1/wagens?select=id,evcc_titel,soc_sensor,bereik_sensor,soc_tijd_sensor,soc_max_min,volgorde,regel_modus&order=volgorde`, { headers: { apikey: SB_ANON, Authorization: auth, "Accept-Profile": "gezin" } });
+  const cfg = (r.ok ? await r.json() : []) as { id: string; evcc_titel: string; soc_sensor: string | null; bereik_sensor: string | null; soc_tijd_sensor: string | null; soc_max_min: number | null; regel_modus: string | null }[];
   const namen = [...cfg.map((c) => c.evcc_titel), ...st.voertuigen.filter((t) => !cfg.some((c) => c.evcc_titel === t))];
   const lp = st.laadpunt;
   return Promise.all(namen.map(async (evcc) => {
     const c = cfg.find((x) => x.evcc_titel === evcc);
     const aanPaal = lp.verbonden && lp.wagen === evcc, laadt = aanPaal && lp.laadt;
-    const [soc, bereik] = aanPaal && lp.soc ? [lp.soc, lp.bereik] : await Promise.all([haWaarde(c?.soc_sensor || null), haWaarde(c?.bereik_sensor || null)]);
+    let [soc, bereik] = aanPaal && lp.soc ? [lp.soc, lp.bereik] : await Promise.all([haWaarde(c?.soc_sensor || null), haWaarde(c?.bereik_sensor || null)]);
+    // Batterij% uit HA enkel als de wagen recent gegevens stuurde (Audi EU Data Act loopt soms een dag achter)
+    let socStand: string | null = null;
+    if (!(aanPaal && lp.soc) && c?.soc_tijd_sensor) {
+      const t = Date.parse(String(await haTekst(c.soc_tijd_sensor)));
+      if (!isFinite(t) || Date.now() - t > (c.soc_max_min ?? 60) * 60000) { soc = null; bereik = null; socStand = isFinite(t) ? new Date(t).toISOString() : "onbekend"; }
+    }
     // Verwachting volgens de laadregel (gezin.laadplan): verwacht laadniveau, wanneer, zon/net, kost, overrule
     const plan = c?.regel_modus ? await rpc(auth, "laadplan_kring", { p_wagen: c.id, p_soc: rond(soc) }).catch(() => null) : null;
     if (plan && typeof plan === "object") delete (plan as Record<string, unknown>).kwartieren;
-    return { evcc, soc: rond(soc), bereik: rond(bereik), aanPaal, laadt, vermogen: laadt ? lp.vermogen : null, resterendS: laadt ? lp.resterendS : null, limiet: aanPaal ? lp.limiet : null, plan };
+    return { evcc, soc: rond(soc), bereik: rond(bereik), aanPaal, laadt, vermogen: laadt ? lp.vermogen : null, resterendS: laadt ? lp.resterendS : null, limiet: aanPaal ? lp.limiet : null, plan, socStand };
   }));
 }
 // Dagprijzen: gemiddelde all-in prijs per dag (gezin.energie_dagprijs). Bron = publieke marktprijzen van Frank (BE),
