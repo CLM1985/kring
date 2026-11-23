@@ -5169,6 +5169,31 @@ i.en-sw.arceer{background:repeating-linear-gradient(135deg,var(--k) 0 1.5px,tran
 .en-plafond .bin{left:0;border-radius:5px 0 0 5px;background:var(--g-wagen);opacity:.45}
 .en-plafond .boven{border-radius:0 5px 5px 0;color:var(--g-duur);background-image:repeating-linear-gradient(135deg,currentColor 0 1.5px,transparent 1.5px 4px);box-shadow:inset 0 0 0 1px currentColor}
 .en-plafond .lim{top:-3px;bottom:-3px;width:2px;margin-left:-1px;border-radius:1px;background:var(--fg)}
+/* Laadbalans */
+.en-split{display:flex;height:26px;gap:2px;margin:10px 0 6px}
+.en-split i{display:block;height:100%;min-width:3px}
+.en-split i:first-child{border-radius:6px 0 0 6px}.en-split i:last-child{border-radius:0 6px 6px 0}.en-split i:only-child{border-radius:6px}
+.en-splitlbl{display:flex;justify-content:space-between;gap:8px;font-size:.76rem;color:var(--muted)}
+.en-splitlbl b{display:block;color:var(--fg);font-size:1rem;font-weight:750;font-variant-numeric:tabular-nums}
+.en-splitlbl span{display:flex;align-items:center;gap:5px}
+.en-splitlbl > div:last-child{text-align:right}.en-splitlbl > div:last-child span{justify-content:flex-end}
+.en-bal{width:100%;border-collapse:collapse;font-size:.8rem;margin-top:14px;font-variant-numeric:tabular-nums}
+.en-bal th{width:25%;font-size:.7rem;font-weight:600;color:var(--muted);text-align:right;padding:0 0 6px 6px;white-space:nowrap}
+.en-bal td{padding:2px 0 8px 6px;text-align:right;white-space:nowrap}
+.en-bal tr.naam td{text-align:left;padding:8px 0 0;border-top:1px solid var(--line);white-space:normal}
+.en-bal tr.naam b{font-weight:650}
+.en-bal tr.naam small{color:var(--muted);font-size:.74rem;margin-left:4px}
+.en-bal td.res{font-weight:750}
+.en-bal tr.naam.tot td{border-top:1.5px solid var(--fg)}
+.en-bal tr.bedr.tot td{font-weight:700}
+.en-perkwh{margin-top:12px;display:grid;gap:8px}
+.en-pk{display:grid;grid-template-columns:4.4rem minmax(0,1fr) 5rem;gap:4px 10px;align-items:center;font-size:.8rem}
+.en-pk .bar{position:relative;height:12px}
+.en-pk .bar::before{content:"";position:absolute;left:50%;top:-3px;bottom:-3px;width:1px;background:var(--muted)}
+.en-pk .bar i{position:absolute;top:0;bottom:0;border-radius:3px}
+.en-pk .v{text-align:right;font-weight:750;white-space:nowrap;font-variant-numeric:tabular-nums}
+.en-pk .s{grid-column:1 / 4;font-size:.72rem;color:var(--muted);margin-top:-2px}
+.en-balans .en-let{font-size:.78rem;color:var(--muted);margin:10px 0 0}
 .en-plafond-lbl{position:relative;height:1.3em;font-size:.74rem;color:var(--muted);font-variant-numeric:tabular-nums}
 .en-plafond-lbl span{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap}
 .en-plafond-lbl span.r{right:0;transform:none}
@@ -5370,6 +5395,18 @@ function enDemoKost(n) {
 const EN_DEMO_REGELS = [
   { kaart_prefix: "BEOPT", naam: "Sara (Volvo)", werkgever: "Telenet", opslag_eur_kwh: 0.30, plafond_eur_kwh: 0.54, opmerking: "Plafond per kWh, verrekend per kwartaal" },
   { kaart_prefix: "BE-RAD", naam: "CLM (Audi)", werkgever: null, opslag_eur_kwh: null, plafond_eur_kwh: null, opmerking: "Geen plafond" }];
+/* Demo: laadkost per dag en per sessie (zelfde sessies als enDemoVergoeding). Per kwartier gemeten vanaf 9 dagen geleden (± 0,31 €/kWh),
+   oudere sessies geschat met de dagprijs (± 0,33 €/kWh) en zonder laadkost per dag. */
+function enDemoLaadkost(van, tot) {
+  const grens = new Date(Date.now() - 9 * 864e5).toLocaleDateString("sv-SE", { timeZone: "Europe/Brussels" }), dagen = [], sessies = [];
+  for (const r of enDemoVergoeding(van, tot)) {
+    const sara = r.inhouding > 0, geschat = r.dag < grens, kost = +(r.kwh * (geschat ? 0.33 : 0.31 - (r.kwh % 3) * 0.02)).toFixed(2);
+    if (!geschat) dagen.push({ dag: r.dag, kwh: r.kwh, eur: kost });
+    sessies.push({ start: `${r.dag}T${sara ? "19:40" : "22:05"}:00+01:00`, dag: r.dag, naam: sara ? "Sara (Volvo)" : "CLM (Audi)", werkgever: sara ? "Telenet" : null,
+      kwh: r.kwh, vergoeding: r.eur, inhouding: r.inhouding, laadkost: kost, geschat });
+  }
+  return { dagen, sessies };
+}
 function enDemoVergoeding(van, tot) {
   const uit = [], vandaag = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Brussels" });
   for (let k = 0; k < 150; k++) {
@@ -5403,7 +5440,8 @@ window.EN_LOCAL = {
   async loadWagens() { const f = (this.d.energie || {}).fotos || {}; return [{ id: "w1", naam: "Wagen A", evcc_titel: "Wagen A", foto: f.w1 || null, volgorde: 1 }, { id: "w2", naam: "Wagen B", evcc_titel: "Wagen B", foto: f.w2 || null, volgorde: 2 }]; },
   async zetWagenFoto(id, foto) { const e = this.d.energie = { ...(this.d.energie || {}) }; e.fotos = { ...(e.fotos || {}), [id]: foto }; this.save(); },
   async loadLaadvergoeding(van, tot) { return enDemoVergoeding(van, tot); },
-  async loadLaadkaartRegels() { return EN_DEMO_REGELS; }
+  async loadLaadkaartRegels() { return EN_DEMO_REGELS; },
+  async loadLaadkost(van, tot) { return enDemoLaadkost(van, tot); }
 };
 const enBinnen = (van, tot, nu = new Date()) => { const t = nu.toTimeString().slice(0, 5); return van === tot ? true : van < tot ? t >= van && t < tot : t >= van || t < tot; };
 function enDemoMetA(st, e) { const lp = st.laadpunt; if (e.ampere) lp.ingesteldA = e.ampere; lp.minA = e.minA || 6; lp.altijdLaden = e.altijd ? "on" : "off";
@@ -5439,7 +5477,9 @@ window.EN_SUPA = {
   /* Laadvergoeding (EVC-net) per dag: [{ dag, eur, kwh, sessies }] */
   async loadLaadvergoeding(van, tot) { return this.ok(await this.g.rpc("laadvergoeding_per_dag", { p_van: van, p_tot: tot })) || []; },
   /* Laadkaarten met hun werkgever, opslag en plafond: [{ kaart_prefix, naam, werkgever, opslag_eur_kwh, plafond_eur_kwh, opmerking }] */
-  async loadLaadkaartRegels() { return this.ok(await this.g.rpc("laadkaart_regels")) || []; }
+  async loadLaadkaartRegels() { return this.ok(await this.g.rpc("laadkaart_regels")) || []; },
+  /* Laadkost: { dagen: [{ dag, kwh, eur }], sessies: [{ start, dag, naam, werkgever, kwh, vergoeding, inhouding, laadkost, geschat }] } */
+  async loadLaadkost(van, tot) { return this.ok(await this.g.rpc("laadkost", { p_van: van, p_tot: tot })) || { dagen: [], sessies: [] }; }
 };
 
 const EN_MODI = [["off", "Uit"], ["smart", "Slim"], ["now", "Snel"]];
@@ -5515,6 +5555,7 @@ function viewEnergie() {
         <div class="en-groep"><h3>Maand</h3></div>
         ${enKostBlok()}
         ${enMaandBlok()}
+        ${enLaadbalansBlok()}
       </div>
     </div><div class="en-col">${laad}${advHtml}</div></div>`;
   enKaartHover();
@@ -6103,7 +6144,10 @@ function enKostBlok() {
   const kop = `<div class="en-kop"><h3>Kost per dag</h3>${k && k.bijgewerkt ? `<span class="muted">bijgewerkt ${new Date(k.bijgewerkt).toLocaleTimeString("nl-BE", { hour: "2-digit", minute: "2-digit" })}</span>` : ""}</div>
     <p class="en-subt">Afname min injectie plus vaste kost, laatste 31 dagen</p>`;
   if (!k) return `<section class="en-blok en-kost">${kop}${e.kostFout ? `<p class="muted">Ophalen mislukt: ${esc(e.kostFout)}</p>` : enSkelet("Kosten ophalen… (de eerste keer rekent Kring de laatste weken uit; dat duurt even)")}</section>`;
-  const dagen = (k.dagen || []).slice(-31), md = (k.maanden || []), mNu = md[md.length - 1] || {}, mVorig = md.length > 1 ? md[md.length - 2] : null;
+  const d31 = (k.dagen || []).slice(-31), md = (k.maanden || []), mNu = md[md.length - 1] || {}, mVorig = md.length > 1 ? md[md.length - 2] : null;
+  // Laadkost per dag (gemeten aan de laadpaal) splitst de afname in huis en laden; dagen zonder laadmeting blijven heel (geen schatting op dagniveau)
+  const lk = d31.length ? enLaadkost(d31[0].dag, d31[d31.length - 1].dag) : null, lkDag = new Map(((lk && lk.data && lk.data.dagen) || []).map(x => [String(x.dag).slice(0, 10), Number(x.eur) || 0]));
+  const dagen = d31.map(d => enKostSplit(d, lkDag.get(d.dag))), metLaden = dagen.some(d => d.laden_eur > 0);
   const gis = dagen.length > 1 ? dagen[dagen.length - 2] : null;
   const cap = mNu.capaciteit_eur != null ? `${enKwh1(mNu.piek_kw)}<small>kW</small>` : "–";
   const capSub = mNu.capaciteit_eur != null ? `≈ ${enEur0(mNu.capaciteit_eur)}` + (mNu.piek_om ? ` · ${new Date(mNu.piek_om).toLocaleString("nl-BE", { day: "numeric", month: "numeric", timeZone: "Europe/Brussels" })}` : "") : "nog geen kwartiermeting";
@@ -6133,25 +6177,35 @@ function enKostBlok() {
   const kies = gis && !gis.leeg ? dagen.length - 2 : dagen.length - 1;
   let m = `<rect id="en-khl" x="${(L + kies * band).toFixed(1)}" y="${T - 4}" width="${band.toFixed(1)}" height="${H - T - B + 4}" rx="3" fill="var(--sunk)"/>`;   // gekozen dag, onder de staven
   dagen.forEach((d, i) => { if (d.leeg) return; const op = d.volledig ? "" : ' opacity=".45"';
-    m += `<path d="${staaf(bx(i), bw, y0 - 1, y(d.afname_eur))}" fill="var(--g-net)"${op}/>`;
+    if (d.laden_eur > 0 && y(d.huis_eur) - y(d.afname_eur) >= 3) {   // huis onderaan, laden erbovenop (2px tussenruimte, rond enkel aan het data-einde)
+      const yh = y(d.huis_eur);
+      if (y0 - 1 - yh >= 0.5) m += `<rect x="${bx(i).toFixed(1)}" y="${yh.toFixed(1)}" width="${bw.toFixed(1)}" height="${(y0 - 1 - yh).toFixed(1)}" fill="var(--g-net)"${op}/>`;
+      m += `<path d="${staaf(bx(i), bw, yh - (y0 - 1 - yh >= 0.5 ? 2 : 1), y(d.afname_eur))}" fill="var(--g-wagen)"${op}/>`;
+    } else m += `<path d="${staaf(bx(i), bw, y0 - 1, y(d.afname_eur))}" fill="var(--g-net)"${op}/>`;
     if (d.injectie_eur > 0) m += `<path d="${staaf(bx(i), bw, y0 + 1, y(-d.injectie_eur))}" fill="var(--g-zon)"${op}/>`;
     m += `<circle cx="${(bx(i) + bw / 2).toFixed(1)}" cy="${y(d.netto_eur).toFixed(1)}" r="${bw >= 6 ? 3.5 : 3}" fill="var(--fg)" stroke="var(--surface)" stroke-width="1.5"${op}/>`; });
   const hits = dagen.map((d, i) => `<rect data-enk="${i}" x="${(L + i * band).toFixed(1)}" y="0" width="${band.toFixed(1)}" height="${H}" fill="transparent"/>`).join("");
   enKostBlok.ctx = { dagen, W, L, band };
   const svg = met.length ? `<svg class="en-gr" viewBox="0 0 ${W} ${H}" role="img" aria-label="Stroomkost per dag, laatste ${dagen.length} dagen${gis && !gis.leeg ? `; gisteren ${enEur0(gis.netto_eur)}` : ""}">${g}${m}${hits}</svg>` : `<p class="muted">Nog geen metingen.</p>`;
-  const rijen = dagen.slice().reverse().filter(d => !d.leeg).map(d => `<tr><td>${enDagKort(d.dag)}${d.volledig ? "" : " *"}</td><td>${enKwh1(d.afname_kwh)}</td><td>${enEur0(d.afname_eur)}</td><td>${enKwh1(d.injectie_kwh)}</td><td>${enEur0(d.injectie_eur)}</td><td><b>${enEur0(d.netto_eur)}</b></td></tr>`).join("");
+  const rijen = dagen.slice().reverse().filter(d => !d.leeg).map(d => `<tr><td>${enDagKort(d.dag)}${d.volledig ? "" : " *"}</td><td>${enKwh1(d.afname_kwh)}</td><td>${enEur0(d.afname_eur)}</td><td>${d.laden_eur > 0 ? enEur0(d.laden_eur) : "–"}</td><td>${enKwh1(d.injectie_kwh)}</td><td>${enEur0(d.injectie_eur)}</td><td><b>${enEur0(d.netto_eur)}</b></td></tr>`).join("");
   const maandRijen = md.filter(x => x.dagen).slice().reverse().map(x => `<tr><td>${enMaandNaam(x.maand)}${x.dagen_volledig < x.dagen_verstreken ? " *" : ""}</td><td>${enKwh1(x.afname_kwh)}</td><td>${enKwh1(x.injectie_kwh)}</td><td>${enEur0(x.netto_eur)}</td><td>${x.capaciteit_eur != null ? enEur0(x.capaciteit_eur) : "–"}</td></tr>`).join("");
   const f = k.formule || {}, ct = v => (v * 100).toLocaleString("nl-BE", { maximumFractionDigits: 2 }) + " ct";
   return `<section class="en-blok en-kost">${kop}${cijfers}
     <div class="en-lees" id="en-klees">${met.length ? enKostLees(dagen[kies]) : ""}</div>
     <div class="en-kaart">${svg}</div>
-    ${enLeg([["var(--g-net)", "afname (kost)"], ["var(--g-zon)", "injectie (opbrengst)"], ["var(--fg)", "netto, met vaste kost", "rond"]])}
+    ${enLeg([["var(--g-net)", metLaden ? "afname huis" : "afname (kost)"], metLaden && ["var(--g-wagen)", "afname laden"], ["var(--g-zon)", "injectie (opbrengst)"], ["var(--fg)", "netto, met vaste kost", "rond"]])}
     ${k.waarschuwing ? `<p class="en-let">Let op: laatste cijfers niet bijgewerkt (${esc(k.waarschuwing)}).</p>` : ""}
     <details class="en-meer"><summary>Tabel en berekening</summary>
       <table class="en-tabel"><thead><tr><th>Maand</th><th>kWh af</th><th>kWh in</th><th>Netto</th><th>Capaciteit</th></tr></thead><tbody>${maandRijen}</tbody></table>
-      <table class="en-tabel" style="margin-top:10px"><thead><tr><th>Dag</th><th>kWh af</th><th>€ af</th><th>kWh in</th><th>€ in</th><th>Netto</th></tr></thead><tbody>${rijen}</tbody></table>
-      <p class="en-uitleg">* onvolledig (meting of prijs ontbreekt). Per kwartier: afname × (${f.factor} × marktprijs + ${ct((f.vast || 0) + (f.toeslag || 0))}), zoals in evcc; injectie × (marktprijs ${(f.injectie_vast || 0) < 0 ? "−" : "+"} ${ct(Math.abs(f.injectie_vast || 0))}), voorlopig tot de ijking met een factuur. Plus ${enEur0(f.vaste_kost_dag)} vaste kost per dag. De maandpiek (capaciteitstarief, ${enEur0(f.capaciteit_kw_jaar)} per kW per jaar, minstens ${f.capaciteit_min_kw} kW) komt enkel uit dagen met kwartiermeting (HA bewaart die ±10 dagen); de meter van Fluvius blijft de referentie. Meting: de netmeters van het energiedashboard in Home Assistant.</p>
+      <table class="en-tabel" style="margin-top:10px"><thead><tr><th>Dag</th><th>kWh af</th><th>€ af</th><th>€ laden</th><th>kWh in</th><th>€ in</th><th>Netto</th></tr></thead><tbody>${rijen}</tbody></table>
+      <p class="en-uitleg">* onvolledig (meting of prijs ontbreekt). Per kwartier: afname × (${f.factor} × marktprijs + ${ct((f.vast || 0) + (f.toeslag || 0))}), zoals in evcc; injectie × (marktprijs ${(f.injectie_vast || 0) < 0 ? "−" : "+"} ${ct(Math.abs(f.injectie_vast || 0))}), voorlopig tot de ijking met een factuur. Plus ${enEur0(f.vaste_kost_dag)} vaste kost per dag. De maandpiek (capaciteitstarief, ${enEur0(f.capaciteit_kw_jaar)} per kW per jaar, minstens ${f.capaciteit_min_kw} kW) komt enkel uit dagen met kwartiermeting (HA bewaart die ±10 dagen); de meter van Fluvius blijft de referentie. Meting: de netmeters van het energiedashboard in Home Assistant. € laden = de laadkost volgens het laadmoment, per kwartier gemeten aan de laadpaal (sinds 14/11/2026); de rest van de afnamekost is huis. Dagen zonder laadmeting worden niet gesplitst.</p>
     </details></section>`;
+}
+/* Afname van een dag splitsen in huis en laden; laden nooit meer dan de afnamekost, huis nooit negatief */
+function enKostSplit(d, laden) {
+  if (!d || d.leeg || !(laden > 0.005)) return { ...d, laden_eur: 0, huis_eur: d && !d.leeg ? d.afname_eur : 0 };
+  const af = Math.max(0, Number(d.afname_eur) || 0), l = Math.min(af, laden);
+  return { ...d, laden_eur: Math.round(l * 100) / 100, huis_eur: Math.round((af - l) * 100) / 100 };
 }
 /* Uitleesregel van "Kost per dag": afname − injectie + vast = netto, plus wat er aan de meting schort */
 function enKostLees(d) {
@@ -6160,7 +6214,7 @@ function enKostLees(d) {
   if (d.gemeten < d.verwacht) let_.push(`${d.gemeten}/${d.verwacht} kwartieren gemeten`);
   if (d.zonder_prijs) let_.push(`${d.zonder_prijs} kwartieren zonder prijs`);
   if (d.geschat) let_.push("deels geschat (HA had een onderbreking)");
-  return `<b>${enDagLang(d.dag)}</b><span>${enSw("var(--g-net)")} ${enEur0(d.afname_eur)} <span class="muted">(${enKwh1(d.afname_kwh)} kWh)</span></span><span>${enSw("var(--g-zon)")} − ${enEur0(d.injectie_eur)}</span><span>vast ${enEur0(d.vast_eur)}</span><span>= <b>${enEur0(d.netto_eur)}</b></span>` +
+  return `<b>${enDagLang(d.dag)}</b>${d.laden_eur > 0 ? `<span>${enSw("var(--g-net)")} huis ${enEur0(d.huis_eur)}</span><span>${enSw("var(--g-wagen)")} laden ${enEur0(d.laden_eur)}</span>` : `<span>${enSw("var(--g-net)")} ${enEur0(d.afname_eur)} <span class="muted">(${enKwh1(d.afname_kwh)} kWh)</span></span>`}<span>${enSw("var(--g-zon)")} − ${enEur0(d.injectie_eur)}</span><span>vast ${enEur0(d.vast_eur)}</span><span>= <b>${enEur0(d.netto_eur)}</b></span>` +
     (d.piek_kw != null ? `<span>piek ${enKwh1(d.piek_kw)} kW</span>` : "") + (let_.length ? `<span class="en-lees-let">${let_.join(" · ")}</span>` : "");
 }
 function enKostHover() {
@@ -6242,6 +6296,7 @@ function enMaandBlok() {
   const maanden = [...new Set(alle.map(d => d.dag.slice(0, 7)))].filter(m => eerste <= `${m}-01`);   // enkel maanden die volledig binnen de opgehaalde dagen vallen
   if (!maanden.length) return `<section class="en-blok en-maand">${kop0}<p class="muted">Nog geen metingen.</p></section>`;
   const idx = Math.max(0, Math.min(maanden.length - 1, maanden.length - 1 + (S.enMaand || 0))), m = maanden[idx];
+  enMaandBlok.getoond = m;   // Laadbalans toont dezelfde maand
   const nDagen = enDagenIn(m), vandaag = enVandaagIso(), huidig = vandaag.slice(0, 7) === m;
   const laatsteDag = huidig ? +vandaag.slice(8) : nDagen;
   const v = enVergMaand(m), R_ = enMaandReken(m, alle.filter(d => d.dag.startsWith(m)), v && v.rijen, laatsteDag);
@@ -6301,14 +6356,15 @@ function enMaandBlok() {
   s += `<line class="en-gids" id="en-mgids" visibility="hidden" x1="-9" x2="-9" y1="${T}" y2="${T + ih}"/>`;
   enMaandBlok.ctx = { W, x0: x(0.5), x1: x(laatsteDag + 0.5), n: laatsteDag, x, kost, verg, inh, netto, perDag, m, werkgever };
   const svg = `<svg class="en-gr" id="en-msvg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${Mnaam}: energiekost ${enEur0(ck)}${heeftV ? `, laadvergoeding ${enEur0(cv)}` : ""}${heeftI ? `, geschatte inhouding ${enEur0(ci)}` : ""}, netto ${enEur0(cn)}${ref != null ? `; ${vNaam} ${enEur0(ref)}` : ""}">${s}</svg>`;
-  const tabel = perDag.slice().reverse().map(d => `<tr><td>${d.dn}/${+m.slice(5, 7)}${d.leeg ? " –" : d.vol ? "" : " *"}</td><td>${enEur0(d.dk)}</td><td>${d.dv ? "− " + enEur0(d.dv) : "–"}</td>${toonInh ? `<td>${d.di ? "+ " + enEur0(d.di) : "–"}</td>` : ""}<td><b>${enEur0(netto[d.dn - 1])}</b></td></tr>`).join("");
+  const lkM = enLaadkost(`${m}-01`, `${m}-${String(nDagen).padStart(2, "0")}`), lkMDag = new Map(((lkM && lkM.data && lkM.data.dagen) || []).map(x => [String(x.dag).slice(0, 10), Number(x.eur) || 0]));
+  const tabel = perDag.slice().reverse().map(d => `<tr><td>${d.dn}/${+m.slice(5, 7)}${d.leeg ? " –" : d.vol ? "" : " *"}</td><td>${enEur0(d.dk)}</td><td>${lkMDag.get(d.ds) > 0.005 ? enEur0(lkMDag.get(d.ds)) : "–"}</td><td>${d.dv ? "− " + enEur0(d.dv) : "–"}</td>${toonInh ? `<td>${d.di ? "+ " + enEur0(d.di) : "–"}</td>` : ""}<td><b>${enEur0(netto[d.dn - 1])}</b></td></tr>`).join("");
   return `<section class="en-blok en-maand">${kop}${cijfers}
     <div class="en-lees" id="en-mlees">${enMaandLees(laatsteDag - 1)}</div>
     <div class="en-kaart">${svg}</div>
     ${enLeg([heeftV && ["var(--g-net)", "energiekost", "lijn"], heeftV && ["var(--g-wagen)", "netto vergoeding", "zacht"], heeftI && ["var(--g-duur)", "inhouding (schatting)", "arceer"], ["var(--fg)", heeftV ? "netto" : "energiekost (geen laadvergoeding)", "lijn"], heeftI && ["var(--muted)", "na bruto vergoeding", "streep"], ref != null && ["var(--muted)", vNaam, "streep"]])}
     ${vFout ? `<p class="en-let">Laadvergoeding ophalen mislukt: ${esc(v.fout)}</p>` : ""}
     ${plafondR.length ? enKwartaalHtml(m, plafondR[0], werkgever, wie) : ""}
-    <details class="en-meer"><summary>Tabel en berekening</summary><table class="en-tabel"><thead><tr><th>Dag</th><th>Kost</th><th>Vergoeding</th>${toonInh ? "<th>Inhouding</th>" : ""}<th>Netto opgeteld</th></tr></thead><tbody>${tabel}</tbody></table>
+    <details class="en-meer"><summary>Tabel en berekening</summary><table class="en-tabel"><thead><tr><th>Dag</th><th>Kost</th><th>waarvan laden</th><th>Vergoeding</th>${toonInh ? "<th>Inhouding</th>" : ""}<th>Netto opgeteld</th></tr></thead><tbody>${tabel}</tbody></table>
       <p class="en-uitleg">Kost = netto per dag uit "Kost per dag" (afname − injectie + vaste kost, zonder capaciteitstarief). Vergoeding = de laadsessies uit EVC-net op de dag van de sessie. ${toonInh ? `Inhouding = <b>een schatting</b> van wat ${esc(werkgever || "de werkgever")} terugvordert voor kaarten met een plafond: (tarief + opslag − plafond) × kWh. ${esc(werkgever || "De werkgever")} rekent per kwartaal met het gemiddelde over álle laadbeurten (thuis, kantoor, publiek); Kring ziet enkel het thuisladen, dus het echte bedrag kan afwijken. Netto = kost − vergoeding + inhouding. ` : ""}${prognose != null ? "Prognose = netto per dag tot nu × aantal dagen van de maand. " : ""}* onvolledig gemeten, – geen meting.</p></details></section>`;
 }
 /* Kwartaalblok onderaan Maandverloop: plafond van de werkgever tegenover de werkelijke kost per kWh */
@@ -6333,6 +6389,68 @@ function enKwartaalHtml(m, regel, werkgever, wie) {
       <div class="en-plafond-lbl">${kw.plafond / schaal > 0.6 ? `<span class="r">plafond ${enEurKwh(kw.plafond)} · werkelijk ${enEurKwh(kw.perKwh)}</span>` : `<span style="left:${pct(kw.plafond)}%">plafond ${enEurKwh(kw.plafond)}</span><span class="r">werkelijk ${enEurKwh(kw.perKwh)}</span>`}</div>`;
   }
   return kop + cijfers + balk + `</div>`;
+}
+/* Laadkost (gezin.laadkost) over [van, tot], gecachet per bereik; lopende periodes om het kwartier opnieuw. Geeft { data, laden, fout }. */
+function enLaadkost(van, tot) {
+  const e = S.en = S.en || {}; e.lk = e.lk || {};
+  if (!db.loadLaadkost) return { data: { dagen: [], sessies: [] } };
+  const sl = van + "|" + tot, c = e.lk[sl], lopend = tot >= enVandaagIso();
+  if (!c || !c.laden && lopend && Date.now() - (c.t || 0) > 15 * 60e3) {
+    e.lk[sl] = { ...(c || {}), laden: true };
+    db.loadLaadkost(van, tot)
+      .then(r => { e.lk[sl] = { data: { dagen: (r && r.dagen) || [], sessies: (r && r.sessies) || [] }, t: Date.now() }; }, x => { console.warn("laadkost:", x); e.lk[sl] = { fout: x.message || String(x), data: (c && c.data) || null, t: Date.now() }; })
+      .finally(() => { if (S.tab === "energie" && !document.querySelector(".en-meer[open]")) viewEnergie(); });
+  }
+  return e.lk[sl];
+}
+/* Zuivere rekenstap (ook met node te testen): sessies groeperen per naam (kaart), resultaat = vergoeding − laadkost − inhouding */
+function enLaadbalansReken(sessies) {
+  const per = new Map(), r2 = v => Math.round(v * 100) / 100;
+  for (const x of sessies || []) {
+    const naam = x.naam || "Andere kaart", g = per.get(naam) || { naam, werkgever: x.werkgever || null, kwh: 0, n: 0, laadkost: 0, vergoeding: 0, inhouding: 0, geschat: 0 };
+    g.kwh += Number(x.kwh) || 0; g.n++; g.laadkost += Number(x.laadkost) || 0; g.vergoeding += Number(x.vergoeding) || 0; g.inhouding += Number(x.inhouding) || 0; if (x.geschat) g.geschat++;
+    per.set(naam, g);
+  }
+  const rond = g => ({ ...g, kwh: r2(g.kwh), laadkost: r2(g.laadkost), vergoeding: r2(g.vergoeding), inhouding: r2(g.inhouding),
+    resultaat: r2(g.vergoeding - g.laadkost - g.inhouding),
+    perKwh: g.kwh > 0.05 ? { terug: (g.vergoeding - g.inhouding) / g.kwh, kost: g.laadkost / g.kwh, saldo: (g.vergoeding - g.inhouding - g.laadkost) / g.kwh } : null });
+  const wagens = [...per.values()].sort((a, b) => b.kwh - a.kwh).map(rond);
+  const tot = rond(wagens.reduce((a, g) => ({ ...a, kwh: a.kwh + g.kwh, n: a.n + g.n, laadkost: a.laadkost + g.laadkost, vergoeding: a.vergoeding + g.vergoeding, inhouding: a.inhouding + g.inhouding, geschat: a.geschat + g.geschat }),
+    { naam: "Totaal", werkgever: null, kwh: 0, n: 0, laadkost: 0, vergoeding: 0, inhouding: 0, geschat: 0 }));
+  return { wagens, tot };
+}
+const enWagenNaam = n => { const m = /^(.*?)\s*\((.*)\)$/.exec(n || ""); return m ? `${m[2]} · ${m[1]}` : n || "Andere kaart"; };   // "Sara (Volvo)" → "Volvo · Sara"
+const enEurTeken = v => (v > 0.004 ? "+ " : v < -0.004 ? "− " : "") + enEur0(Math.abs(v));
+/* ---------- Laadbalans: wat het thuisladen kostte, tegenover wat de werkgevers terugbetalen (zelfde maand als Maandverloop) ---------- */
+function enLaadbalansBlok() {
+  const e = S.en = S.en || {}, k = e.kost, m = enMaandBlok.getoond;
+  const kop0 = `<div class="en-kop"><h3>Laadbalans</h3>${m ? `<span class="muted">${enMaandNaam(m)}</span>` : ""}</div><p class="en-subt">Wat het thuisladen kostte, tegenover wat de werkgevers terugbetalen</p>`;
+  if (!k) return `<section class="en-blok en-balans">${kop0}${enSkelet("Laadkost ophalen…")}</section>`;
+  if (!m || !db.loadLaadkost) return "";
+  const nDagen = enDagenIn(m), vandaag = enVandaagIso(), huidig = vandaag.slice(0, 7) === m, laatste = huidig ? vandaag : `${m}-${String(nDagen).padStart(2, "0")}`;
+  const lk = enLaadkost(`${m}-01`, `${m}-${String(nDagen).padStart(2, "0")}`);
+  if (!lk || !lk.data) return `<section class="en-blok en-balans">${kop0}${lk && lk.fout ? `<p class="muted">Laadkost ophalen mislukt: ${esc(lk.fout)}</p>` : enSkelet("Laadkost ophalen…")}</section>`;
+  const sessies = lk.data.sessies.filter(x => String(x.dag).slice(0, 7) === m);
+  const kop = `<div class="en-kop"><h3>Laadbalans</h3><span class="muted">${enMaandNaam(m)}${huidig ? ` · tot ${+vandaag.slice(8)}/${+m.slice(5, 7)}` : ""}</span></div><p class="en-subt">Wat het thuisladen kostte, tegenover wat de werkgevers terugbetalen</p>`;
+  if (!sessies.length) return `<section class="en-blok en-balans">${kop}<p class="muted" style="margin-top:10px">Geen laadsessies in ${enMaandNaam(m)}.</p></section>`;
+  const { wagens, tot } = enLaadbalansReken(sessies);
+  const energiekost = (k.dagen || []).filter(d => d.dag.startsWith(m) && d.dag <= laatste && !d.leeg).reduce((a, d) => a + (Number(d.netto_eur) || 0), 0);
+  const laden = tot.laadkost, huis = Math.max(0, energiekost - laden), geschat = tot.geschat > 0, ca = geschat ? "≈ " : "";
+  const cijfers = `<div class="en-cijfers c2">${enCijfer("Energiekost", enEur0(energiekost), `laden: ${enKwh1(tot.kwh)} kWh à ${ca}${enEurKwh(tot.kwh > 0.05 ? laden / tot.kwh : 0)}`)}${enCijfer("Balans laden", `${ca}${enEurTeken(tot.resultaat)}`, "vergoeding − laadkost − inhouding", true)}</div>`;
+  const balk = energiekost > 0.05 ? `<div class="en-split" role="img" aria-label="Energiekost: huis ${enEur0(huis)}, laden ${enEur0(laden)}"><i style="flex:${huis.toFixed(2)};background:var(--g-net)"></i><i style="flex:${Math.min(laden, energiekost).toFixed(2)};background:var(--g-wagen)"></i></div>
+    <div class="en-splitlbl"><div><span>${enSw("var(--g-net)")}huis</span><b>${enEur0(huis)}</b></div><div><span>${enSw("var(--g-wagen)")}laden</span><b>${ca}${enEur0(laden)}</b></div></div>` : "";
+  const rij = (g, tot_) => `<tr class="naam${tot_ ? " tot" : ""}"><td colspan="4"><b>${tot_ ? "Totaal" : esc(enWagenNaam(g.naam))}</b> <small>${enKwh1(g.kwh)} kWh · ${g.n} ${g.n === 1 ? "sessie" : "sessies"}${!tot_ && g.werkgever ? " · " + esc(g.werkgever) : ""}</small></td></tr>
+    <tr class="bedr${tot_ ? " tot" : ""}"><td>${g.geschat ? "≈ " : ""}${enEurTeken(-g.laadkost)}</td><td>${enEurTeken(g.vergoeding)}</td><td>${g.inhouding > 0.004 ? enEurTeken(-g.inhouding) : "–"}</td><td class="res">${enEurTeken(g.resultaat)}</td></tr>`;
+  const tabel = `<table class="en-bal"><thead><tr><th>Laadkost</th><th>Vergoeding</th><th>Inhouding</th><th>Resultaat</th></tr></thead><tbody>${wagens.map(g => rij(g)).join("")}${wagens.length > 1 ? rij(tot, true) : ""}</tbody></table>`;
+  const metKwh = wagens.filter(g => g.perKwh), sch = Math.max(0.2, ...metKwh.map(g => Math.abs(g.perKwh.saldo))) * 1.15;
+  const perKwh = metKwh.length ? `<div class="en-perkwh"><div class="en-tussen" style="margin:0">Per kWh: netto terugbetaald − laadkost</div>${metKwh.map(g => { const v = g.perKwh.saldo, w = (Math.abs(v) / sch * 50).toFixed(1), auto = enWagenNaam(g.naam).split(" · ")[0];
+      return `<div class="en-pk"><b>${esc(auto)}</b><span class="bar" role="img" aria-label="${esc(auto)}: ${enEurTeken(v)} per kWh"><i style="${v >= 0 ? `left:50%;width:${w}%` : `right:50%;width:${w}%`};background:${v >= 0 ? "var(--g-wagen)" : "var(--g-duur)"}"></i></span><span class="v">${g.geschat ? "≈ " : ""}${enEurTeken(v)}</span>
+        <span class="s">${enEurKwh(g.perKwh.terug)} terug − ${enEurKwh(g.perKwh.kost)} kost per kWh</span></div>`; }).join("")}</div>` : "";
+  const sesRijen = sessies.slice().sort((a, b) => String(b.start || b.dag).localeCompare(String(a.start || a.dag))).map(x => `<tr><td>${+String(x.dag).slice(8, 10)}/${+String(x.dag).slice(5, 7)}${x.geschat ? " ≈" : ""}</td><td style="text-align:left">${esc(enWagenNaam(x.naam).split(" · ")[0])}</td><td>${enKwh1(x.kwh)}</td><td>${enEur0(x.laadkost)}</td><td>${enEur0(x.vergoeding)}</td><td>${Number(x.inhouding) > 0.004 ? enEur0(x.inhouding) : "–"}</td></tr>`).join("");
+  return `<section class="en-blok en-balans">${kop}${cijfers}${balk}${tabel}${perKwh}
+    <p class="en-let">Laadkost per kwartier gemeten aan de laadpaal sinds 14/11/2026${geschat ? "; ≈ = oudere sessies, geschat met de gemiddelde dagprijs" : ""}.</p>
+    <details class="en-meer"><summary>Tabel en berekening</summary><table class="en-tabel"><thead><tr><th>Dag</th><th style="text-align:left">Wagen</th><th>kWh</th><th>Laadkost</th><th>Vergoeding</th><th>Inhouding</th></tr></thead><tbody>${sesRijen}</tbody></table>
+      <p class="en-uitleg">Per sessie uit EVC-net. Laadkost = kWh per kwartier aan de laadpaal × de all-in prijs van dat kwartier; was er onvoldoende kwartiermeting, dan kWh × de gemiddelde dagprijs (≈). Resultaat = vergoeding − laadkost − inhouding (de inhouding is een schatting, zie Maandverloop). Huis = energiekost van de maand − laadkost.</p></details></section>`;
 }
 function enMaandLees(i) {
   const c = enMaandBlok.ctx; if (!c || i < 0) return "";
