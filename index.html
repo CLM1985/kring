@@ -5296,6 +5296,7 @@ window.EN_LOCAL = {
   async zetAltijd(aan) { const e = this.d.energie = { ...(this.d.energie || {}), altijd: aan }; this.save(); const st = enDemoMetA(enDemoStatus(e.modus || "smart"), e); return { ...st, venster: enDemoVenster(e) }; },
   async zetRegels(aan, modus) { return { ...(await this.loadEnergie("status")), melding: aan ? "Volgens plan" : "Overrule: " + modus }; },
   async zetDoel() { return { ...(await this.loadEnergie("status")), melding: "Doel aangepast (testversie)" }; },
+  async zetVol100(aan) { return { ...(await this.loadEnergie("status")), melding: aan ? "Volledig laden (testversie)" : "Standaardlimiet (testversie)" }; },
   async zetToch(uren) { const e = this.d.energie = { ...(this.d.energie || {}) }, v = e.venster || {};
     if (uren === 0) { e.toch = null; e.modus = "off"; }
     else { let t; if (uren == null) { t = new Date(); const [h, m] = (v.van || "22:00").split(":"); t.setHours(+h, +m, 0, 0); if (t <= new Date()) t.setDate(t.getDate() + 1); } else t = new Date(Date.now() + uren * 3600e3); e.toch = t.toISOString(); e.modus = "now"; }
@@ -5331,6 +5332,8 @@ window.EN_SUPA = {
   async zetMinStroom(a) { return this.enRoep({ actie: "minstroom", ampere: a }); },
   async zetRegels(aan, modus) { return this.enRoep({ actie: "regels", aan, modus }); },
   async zetDoel(uur, kwh) { return this.enRoep({ actie: "doel", uur, kwh }); },
+  async zetVol100(aan) { const r = this.ok(await this.g.rpc("laadsessie_vol100", { p_aan: !!aan })); if (r && r.ok === false) throw new Error(r.melding || "Niet gelukt");
+    return { ...(await this.enRoep({ actie: "status" })), melding: aan ? "Zeker 100 % voor deze laadbeurt" : "Terug naar het standaardplan" }; },
   async loadWagens() { return this.ok(await this.g.from("wagens").select("id, naam, evcc_titel, foto, volgorde").eq("huishouden_id", this.h).order("volgorde")); },
   async zetWagenFoto(id, foto) { this.ok(await this.g.from("wagens").update({ foto }).eq("id", id).eq("huishouden_id", this.h)); }
 };
@@ -5433,21 +5436,30 @@ const enDagVan = t => { if (!t) return ""; const d = String(t).slice(0, 10), f =
 function enPlanHtml(w, s) {
   const p = w.plan; if (!p || !p.regel || !p.actief) return "";
   const kwh = x => Number(x || 0).toLocaleString("nl-BE", { maximumFractionDigits: 1 });
-  if (w.aanPaal && p.override) return `<div class="en-plan uit"><div>⏸ Plan gepauzeerd${p.override_reden ? ` <span class="muted">(${esc(p.override_reden)})</span>` : ""}</div></div>`;
+  if (w.aanPaal && p.override) return `<div class="en-plan uit"><div>⏸ Plan gepauzeerd${p.override_reden ? ` <span class="muted">(${esc(p.override_reden)})</span>` : ""}</div>${enVolHtml(w, p, s)}</div>`;
   const doel = `${enDagVan(p.doel)}${enHm(p.doel)}`;
   const stil = w.aanPaal && p.laadt_niet ? `<div class="en-plan-let">⚠ ${esc(w.evcc)} neemt geen stroom sinds ${esc(p.stil_sinds || "")} terwijl het plan wil laden: open de app van de wagen om hem te wekken.</div>` : "";
-  const niveau = p.soc_verwacht != null ? `<b>${p.soc_nu != null ? Math.round(p.soc_nu) + " % → " : ""}${p.soc_verwacht} %</b> om ${doel}` : `<b>+${kwh(Number(p.zon_kwh) + Number(p.net_kwh))} kWh</b> tegen ${doel}`;
+  const niveau = p.lim_bereikt && !(p.soc_verwacht > p.soc_nu) ? `<b>${Math.round(p.soc_nu)} %</b>: minimum ${p.max_soc} % bereikt` : p.soc_verwacht != null ? `<b>${p.soc_nu != null ? Math.round(p.soc_nu) + " % → " : ""}${p.soc_verwacht} %</b> om ${doel}` : `<b>+${kwh(Number(p.zon_kwh) + Number(p.net_kwh))} kWh</b> tegen ${doel}`;
   const bron = Number(p.nodig_kwh) <= 0 ? "doel bereikt, enkel nog zon" : [Number(p.zon_kwh) > 0 ? `${kwh(p.zon_kwh)} kWh zon` : "", Number(p.net_kwh) > 0 ? `${kwh(p.net_kwh)} kWh net (± € ${Number(p.kost_eur).toLocaleString("nl-BE", { minimumFractionDigits: 2 })})` : ""].filter(Boolean).join(" + ");
   return `<div class="en-plan">${stil}
     <div>${w.aanPaal ? "Verwacht" : "Als je nu insteekt"}: ${niveau}</div>
     <div class="en-w-sub">${esc(bron)}${p.klaar_om ? ` · klaar ± ${enDagVan(p.klaar_om)}${enHm(p.klaar_om)}` : ""}${Number(p.tekort_kwh) > 0 ? ` · <span style="color:#e5484d">${kwh(p.tekort_kwh)} kWh tekort</span>` : ""}</div>
-    ${w.aanPaal ? `<div class="en-w-sub">${esc(p.reden || "")}</div>${s.magSturen ? enDoelHtml(p) : ""}` : ""}</div>`;
+    ${w.aanPaal ? `<div class="en-w-sub">${esc(p.reden || "")}</div>${enVolHtml(w, p, s)}${s.magSturen ? enDoelHtml(p, s) : ""}` : ""}</div>`;
+}
+/* Laadniveau-limiet van de wagen (bv. Volvo 85 %) en de overrule "Volledig laden (100 %)" voor de lopende laadbeurt */
+function enVolHtml(w, p, s) {
+  if (!w.aanPaal || p.max_soc_wagen == null) return "";
+  const dis = s.magSturen ? "" : "disabled", lim = Math.round(p.max_soc_wagen);
+  return p.vol_100
+    ? `<div class="en-doel-rij"><span>🔋 <b>Zeker 100 %</b> voor deze laadbeurt (ook in duurdere kwartieren)</span><button class="knop sec klein" data-envol="0" ${dis}>Terug naar minstens ${lim} %</button></div>`
+    : `<div class="en-doel-rij"><span class="muted">Minstens ${lim} %; met zon en in goedkope kwartieren tot 100 %</span><button class="knop sec klein" data-envol="1" ${dis}>Zeker 100 %</button></div>`;
 }
 /* Doel voor de lopende sessie: vertrekuur en/of kWh (bv. "morgen al om 6 u weg", "vandaag maar 5 kWh") */
-function enDoelHtml(p) {
+function enDoelHtml(p, s) {
+  const sk = s && s.sessie && s.sessie.doel_kwh != null ? Number(s.sessie.doel_kwh) : null, kv = sk != null ? sk : p.max_soc != null ? "" : p.doel_kwh != null ? Number(p.doel_kwh) : "";
   return `<details class="en-doel"><summary>✏️ Doel aanpassen${p.eigen_doel ? " (aangepast)" : ""}</summary>
     <div class="en-doel-rij"><label>Klaar om <input type="time" id="en-doel-uur" value="${esc(enHm(p.doel))}"></label>
-    <label>kWh <input type="number" id="en-doel-kwh" min="0" max="100" step="1" value="${p.doel_kwh != null ? Number(p.doel_kwh) : ""}" style="width:5em"></label></div>
+    <label>kWh <input type="number" id="en-doel-kwh" min="0" max="100" step="1" value="${kv}"${p.max_soc != null ? ` placeholder="tot ${Math.round(p.max_soc)} %"` : ""} style="width:6em"></label></div>
     <div class="en-doel-rij"><button class="knop klein" data-endoel>Opslaan</button><button class="knop sec klein" data-endoel-reset>Standaard</button>
     <span class="muted">geldt tot uitpluggen</span></div></details>`;
 }
@@ -6029,6 +6041,15 @@ document.addEventListener("click", ev => {
   const v = b.dataset.enregels, aan = v === "plan";
   run(async () => {
     try { e.status = await db.zetRegels(aan, aan ? null : v); e.t = Date.now(); toast(e.status.melding || (aan ? "Volgens plan" : "Overrule tot uitpluggen")); }
+    finally { if (S.tab === "energie") viewEnergie(); }
+  });
+});
+document.addEventListener("click", ev => {
+  const b = ev.target && ev.target.closest && ev.target.closest("[data-envol]"); if (!b) return;
+  const e = S.en || {}; if (!e.status || !e.status.magSturen) return;
+  const aan = b.dataset.envol === "1"; b.disabled = true;
+  run(async () => {
+    try { e.status = await db.zetVol100(aan); e.t = Date.now(); toast(e.status.melding || (aan ? "Volledig laden" : "Standaardlimiet")); }
     finally { if (S.tab === "energie") viewEnergie(); }
   });
 });
