@@ -5145,6 +5145,13 @@ details.en-meer .en-tabel th,details.en-meer .en-tabel td{padding:4px 4px}
 body:not(.breed) .en-stroom{order:1} body:not(.breed) .en-dagblok{order:2} body:not(.breed) .en-laad{order:3} body:not(.breed) .en-advies{order:4} body:not(.breed) .en-maandblok{order:5}
 [data-stijl="nieuw"] .en-blok{border-color:transparent;border-radius:18px;box-shadow:0 1px 2px rgba(20,20,30,.05)}
 .en-blok > .en-kop{margin-bottom:0;align-items:center;flex-wrap:wrap}
+.en-inklap{margin-left:auto;background:none;border:0;padding:4px 6px;cursor:pointer;color:var(--muted);font-size:1rem;line-height:1;border-radius:8px}
+.en-inklap:hover{background:var(--line)}
+.en-inklap svg{display:block;transition:transform .15s}
+.en-blok.dicht .en-inklap svg{transform:rotate(-90deg)}
+.en-blok[data-inklap] > .en-kop h3{cursor:pointer}
+.en-blok.dicht > :not(.en-kop){display:none}
+.en-blok.dicht > .en-kop > :not(h3):not(.en-inklap){display:none}
 .en-blok > .en-kop h3{margin:0}
 .en-subt{font-size:.82rem;color:var(--muted);margin:2px 0 0}
 .en-cijfers{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px 12px;margin:12px 0 10px}
@@ -5565,7 +5572,30 @@ function viewEnergie() {
   enCumHover();
   enKostHover();
   enMaandHover();
+  enInklap();
 }
+/* Inklapbare kaarten: tik op de titel of het pijltje; per toestel onthouden (pref "en-dicht") */
+const EN_INKLAP = [["en-cum", "cum"], ["en-app", "app"], ["en-bron", "bron"], ["en-kost", "kost"], ["en-maand", "maand"], ["en-balans", "balans"]];
+function enInklap() {
+  const dicht = new Set(pref.get("en-dicht", []));
+  for (const [kl, k] of EN_INKLAP) {
+    const sec = document.querySelector(`#view section.en-blok.${kl}`); if (!sec) continue;
+    const kop = sec.querySelector(":scope > .en-kop"); if (!kop) continue;
+    sec.dataset.inklap = k;
+    if (!kop.querySelector(".en-inklap")) kop.insertAdjacentHTML("beforeend", `<button class="en-inklap" data-eninklap="${k}" aria-label="In- of uitklappen"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>`);
+    sec.classList.toggle("dicht", dicht.has(k));
+    kop.querySelector(".en-inklap").setAttribute("aria-expanded", String(!dicht.has(k)));
+  }
+}
+document.addEventListener("click", ev => {
+  const t = ev.target.closest && (ev.target.closest("[data-eninklap]") || ev.target.closest(".en-blok[data-inklap] > .en-kop h3")); if (!t) return;
+  const sec = t.closest(".en-blok[data-inklap]"); if (!sec) return;
+  const k = sec.dataset.inklap, dicht = new Set(pref.get("en-dicht", []));
+  if (dicht.has(k)) dicht.delete(k); else dicht.add(k);
+  pref.set("en-dicht", [...dicht]);
+  sec.classList.toggle("dicht", dicht.has(k));
+  const b = sec.querySelector(".en-inklap"); if (b) b.setAttribute("aria-expanded", String(!dicht.has(k)));
+});
 
 /* Wagens: foto, batterij, vermogen en "vol om" per wagen. Live waarden uit ha-energie (evcc + HA-sensoren),
    naam en foto uit gezin.wagens (ouders kunnen de foto wijzigen). Eén laadpaal: enkel de aangesloten wagen laadt. */
