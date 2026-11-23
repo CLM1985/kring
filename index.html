@@ -5111,6 +5111,9 @@ body:not(.breed) .en-col{display:contents}
 .en-tabel th,.en-tabel td{padding:4px 6px;border-bottom:1px solid var(--line);text-align:right}
 .en-tabel th:first-child,.en-tabel td:first-child{text-align:left}
 details.en-meer summary{cursor:pointer;color:var(--muted);font-size:.85rem;margin-top:8px}
+details.en-meer{max-width:100%;overflow-x:auto;min-width:0}
+.en-maandblok,.en-dagblok{grid-template-columns:minmax(0,1fr)}.en-maandblok>*,.en-dagblok>*{min-width:0}
+details.en-meer .en-tabel th,details.en-meer .en-tabel td{padding:4px 4px}
 /* Kost per dag: afname (net-blauw, boven 0) − injectie (zon, onder 0) + vaste kost = netto (punt) */
 .en-kost-tegels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:10px}
 .en-kost-tegel{border:1px solid var(--line);border-radius:10px;padding:8px 10px;min-width:0}
@@ -6446,11 +6449,11 @@ function enLaadbalansBlok() {
   const perKwh = metKwh.length ? `<div class="en-perkwh"><div class="en-tussen" style="margin:0">Per kWh: netto terugbetaald − laadkost</div>${metKwh.map(g => { const v = g.perKwh.saldo, w = (Math.abs(v) / sch * 50).toFixed(1), auto = enWagenNaam(g.naam).split(" · ")[0];
       return `<div class="en-pk"><b>${esc(auto)}</b><span class="bar" role="img" aria-label="${esc(auto)}: ${enEurTeken(v)} per kWh"><i style="${v >= 0 ? `left:50%;width:${w}%` : `right:50%;width:${w}%`};background:${v >= 0 ? "var(--g-wagen)" : "var(--g-duur)"}"></i></span><span class="v">${g.geschat ? "≈ " : ""}${enEurTeken(v)}</span>
         <span class="s">${enEurKwh(g.perKwh.terug)} terug − ${enEurKwh(g.perKwh.kost)} kost per kWh</span></div>`; }).join("")}</div>` : "";
-  const sesRijen = sessies.slice().sort((a, b) => String(b.start || b.dag).localeCompare(String(a.start || a.dag))).map(x => `<tr><td>${+String(x.dag).slice(8, 10)}/${+String(x.dag).slice(5, 7)}${x.geschat ? " ≈" : ""}</td><td style="text-align:left">${esc(enWagenNaam(x.naam).split(" · ")[0])}</td><td>${enKwh1(x.kwh)}</td><td>${enEur0(x.laadkost)}</td><td>${enEur0(x.vergoeding)}</td><td>${Number(x.inhouding) > 0.004 ? enEur0(x.inhouding) : "–"}</td></tr>`).join("");
+  const sesRijen = sessies.slice().sort((a, b) => String(b.start || b.dag).localeCompare(String(a.start || a.dag))).map(x => `<tr><td>${+String(x.dag).slice(8, 10)}/${+String(x.dag).slice(5, 7)}${x.geschat ? " ≈" : ""}</td><td style="text-align:left">${esc(enWagenNaam(x.naam).split(" · ")[0])}</td><td>${enKwh1(x.kwh)}</td><td>${enEur0(x.laadkost)}${Number(x.kwh) > 0.05 ? `<br><small class="muted">${enEurKwh(Number(x.laadkost) / Number(x.kwh))}/kWh</small>` : ""}</td><td>${enEur0(x.vergoeding)}</td><td>${Number(x.inhouding) > 0.004 ? enEur0(x.inhouding) : "–"}</td></tr>`).join("");
   return `<section class="en-blok en-balans">${kop}${cijfers}${balk}${tabel}${perKwh}
     <p class="en-let">Laadkost per kwartier gemeten aan de laadpaal sinds 14/11/2026${geschat ? "; ≈ = oudere sessies, geschat met de gemiddelde dagprijs" : ""}.</p>
-    <details class="en-meer"><summary>Tabel en berekening</summary><table class="en-tabel"><thead><tr><th>Dag</th><th style="text-align:left">Wagen</th><th>kWh</th><th>Laadkost</th><th>Vergoeding</th><th>Inhouding</th></tr></thead><tbody>${sesRijen}</tbody></table>
-      <p class="en-uitleg">Per sessie uit EVC-net. Laadkost = kWh per kwartier aan de laadpaal × de all-in prijs van dat kwartier; was er onvoldoende kwartiermeting, dan kWh × de gemiddelde dagprijs (≈). Resultaat = vergoeding − laadkost − inhouding (de inhouding is een schatting, zie Maandverloop). Huis = energiekost van de maand − laadkost.</p></details></section>`;
+    <details class="en-meer"><summary>Tabel en berekening</summary><div style="overflow-x:auto"><table class="en-tabel"><thead><tr><th>Dag</th><th style="text-align:left">Wagen</th><th>kWh</th><th>Laadkost<br><small class="muted">€/kWh</small></th><th>Vergoeding</th><th>Inhouding</th></tr></thead><tbody>${sesRijen}</tbody></table></div>
+      <p class="en-uitleg">Per sessie uit EVC-net. Laadkost = kWh per kwartier aan de laadpaal × de all-in prijs van dat kwartier (€/kWh = gemiddelde prijs van die sessie); was er onvoldoende kwartiermeting, dan kWh × de gemiddelde dagprijs (≈). Resultaat = vergoeding − laadkost − inhouding (de inhouding is een schatting, zie Maandverloop). Huis = energiekost van de maand − laadkost.</p></details></section>`;
 }
 function enMaandLees(i) {
   const c = enMaandBlok.ctx; if (!c || i < 0) return "";
