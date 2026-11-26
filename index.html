@@ -7186,6 +7186,7 @@ function viewLijst(){
       ${nOngekoppeld ? `<button class="knop" data-koppelalles>Producten koppelen (${nOngekoppeld})</button>` : ""}
       <button class="knop sec" data-bsscan>Scannen${telBewaard("lijst") ? ` <span class="vr-n">${telBewaard("lijst")}</span>` : ""}</button>
       <button class="knop sec" data-kopieer>Kopieer lijst</button>
+      ${open.length ? `<button class="knop sec" data-verplaats title="Niet-afgevinkte items naar de planweek ${esc(vsDagLabel(iso(plus(S.pweek, 7))))}">Naar volgende week (${open.length})</button>` : ""}
       <label class="toggle"><input type="checkbox" id="verberg" ${S.verberg ? "checked" : ""}> Afgevinkte verbergen</label>
     </div>
     ${groepen.length ? groepen.map(([a, l]) => `<div class="groep"><h3><span>${esc(a)}</span></h3>${l.map(itemHtml).join("")}</div>`).join("")
@@ -7536,6 +7537,7 @@ document.addEventListener("click", e => {
   }
   else if (t.dataset.delextra) run(async () => { await db.deleteExtra(t.dataset.delextra); await herlaadWeek(); render(); });
   else if ("kopieer" in t.dataset) kopieer();
+  else if ("verplaats" in t.dataset) openVerplaats();
   else if ("bsscan" in t.dataset) openTellen("lijst");
   else if ((t.id === "w-prev" || t.id === "w-next" || t.id === "w-nu") && S.tab === "budget" && S.budget){
     S.bmaand = t.id === "w-nu" ? S.budget.huidig : t.id === "w-prev" ? vorigeMnd(S.bmaand) : KB.volgende(S.bmaand);
@@ -7627,6 +7629,67 @@ $("#sheet").addEventListener("click", e => { if (e.target.id === "sheet") sluitP
 document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("#sheet").hidden) sluitPaneel(); });
 window.addEventListener("hashchange", () => { const h = location.hash.slice(1).split("/")[0]; if (["vandaag","agenda","menu","gerechten","lijst","lijsten","budget","diepvries","energie"].includes(h) && h !== S.tab){ S.tab = h; render(); } dvOpenUitHash(); });
 let rT; window.addEventListener("resize", () => { clearTimeout(rT); rT = setTimeout(() => { if (S.tab === "diepvries" && (window.innerWidth >= 1000) === document.body.classList.contains("breed")) return; if (db && ["menu", "budget", "vandaag", "agenda", "diepvries", "energie"].includes(S.tab) && $("#sheet").hidden) render(); }, 200); });
+
+/* Niet-afgevinkte items van de getoonde planweek naar de volgende planweek.
+   Extra's verhuizen (week_start wijzigt). Lijnen uit het weekmenu worden een extra in de volgende week
+   en worden in de oude week afgevinkt, zodat ze niet twee keer openstaan.
+   Staat dezelfde naam + eenheid al open als extra in de volgende week: hoeveelheid optellen, geen tweede lijn. */
+function openVerplaats(){
+  const van = iso(S.pweek), naar = iso(plus(S.pweek, 7));
+  const items = BL.teBestellen(lijstItems()).sort((x, y) => x.afdeling.localeCompare(y.afdeling, "nl") || x.naam.localeCompare(y.naam, "nl"));
+  if (!items.length) return toast("Geen open items");
+  const kies = new Set(items.map(i => i.key));
+  const teller = () => { const b = $("#vp-ok"); b.textContent = `Verplaatsen (${kies.size})`; b.disabled = !kies.size; };
+  openPaneel(`
+    <div class="paneel-kop"><h2>Naar volgende week</h2><button class="ib" data-sluit aria-label="Sluiten">✕</button></div>
+    <p class="muted" style="margin:-6px 0 10px">Van ${esc(vsDagLabel(van))} naar de planweek ${esc(vsDagLabel(naar))} – ${esc(vsDagLabel(iso(plus(S.pweek, 13))))}. Wat je aanvinkt, verdwijnt hier van de open lijst.</p>
+    <label class="toggle" style="margin-bottom:6px"><input type="checkbox" id="vp-alles" checked> Alles</label>
+    <div>${items.map(i => `<div class="item"><label>
+      <input type="checkbox" data-vp="${esc(i.key)}" checked>
+      <span class="qty">${fmtQty(i.q, i.eenheid)}</span>
+      <span class="wat">${esc(i.naam)}${i.extra ? ` <span class="tag">extra</span>` : ""}${i.voor.size ? `<span class="voor">voor ${esc([...i.voor].join(", "))}</span>` : ""}</span>
+    </label></div>`).join("")}</div>
+    <div class="voet"><button class="knop sec" data-sluit>Annuleren</button><button class="knop" id="vp-ok" data-vpok>Verplaatsen (${kies.size})</button></div>`);
+  const p = $("#paneel");
+  p.onchange = e => {
+    const t = e.target;
+    if (t.id === "vp-alles"){ p.querySelectorAll("[data-vp]").forEach(c => { c.checked = t.checked; t.checked ? kies.add(c.dataset.vp) : kies.delete(c.dataset.vp); }); }
+    else if (t.dataset.vp){ t.checked ? kies.add(t.dataset.vp) : kies.delete(t.dataset.vp); $("#vp-alles").checked = kies.size === items.length; }
+    teller();
+  };
+  p.onclick = e => {
+    const t = e.target.closest("button"); if (!t || !("vpok" in t.dataset)) return;
+    t.disabled = true;
+    run(async () => {
+      try { const n = await verplaatsItems(items.filter(i => kies.has(i.key)), van, naar); await herlaadWeek(); sluitPaneel(); render(); toast(`${n} item${n === 1 ? "" : "s"} naar ${vsDagLabel(naar)}`); }
+      finally { if (t.isConnected) t.disabled = false; }
+    });
+  };
+}
+async function verplaatsItems(items, van, naar){
+  const doel = (await db.loadWeek(naar, naar, naar)).extra;
+  const zelfde = i => doel.find(x => !x.afgevinkt && norm(x.naam) === norm(i.naam) && (x.eenheid || "") === (i.eenheid || ""));
+  let n = 0;
+  for (const i of items){
+    const z = zelfde(i);
+    if (z){
+      const q = z.hoeveelheid != null && i.q != null ? Number(z.hoeveelheid) + i.q : z.hoeveelheid != null ? Number(z.hoeveelheid) : i.q;
+      if (q != null && q !== Number(z.hoeveelheid)) { await db.updExtra(z.id, { hoeveelheid: Math.round(q * 1000) / 1000 }); z.hoeveelheid = q; }
+      if (i.extra) await db.deleteExtra(i.id); else await db.setCheck(van, i.key, true);
+    } else if (i.extra){
+      await db.updExtra(i.id, { week_start: naar });
+      doel.push({ id: i.id, naam: i.naam, eenheid: i.eenheid, hoeveelheid: i.q, afgevinkt: false });
+    } else {
+      const x = { naam: i.naam, hoeveelheid: i.q == null ? null : Math.round(i.q * 1000) / 1000, eenheid: i.eenheid || null, afdeling: i.afdeling || K.afdelingVoor(i.naam) };
+      await db.addExtra(naar, x);
+      await db.setCheck(van, i.key, true);
+      doel.push({ ...x, afgevinkt: false });
+    }
+    n++;
+  }
+  await db.log(`zette ${n} open boodschap${n === 1 ? "" : "pen"} door naar de week van ${vsDagLabel(naar)}`);
+  return n;
+}
 
 async function kopieer(){
   const items = BL.teBestellen(lijstItems()), start = iso(S.pweek);
